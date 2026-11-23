@@ -32,7 +32,7 @@ public final class SnapgentProtocolHandler {
     public JSONObject connected() throws JSONException {
         return new JSONObject()
                 .put("type", "connected")
-                .put("bridge_version", "android-0.2.0")
+                .put("bridge_version", "android-" + mcp.appVersion())
                 .put("mcp_alive", true)
                 .put("tools", catalog)
                 .put("servers", new JSONArray().put(new JSONObject()

@@ -2,6 +2,7 @@ package dev.snapgent.bridge;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.util.Base64;
 import java.security.SecureRandom;
 
@@ -64,5 +65,16 @@ public final class BridgeConfig {
 
     public static String connectionUrl(Context context) {
         return "ws://127.0.0.1:" + port(context) + "/ws?token=" + token(context);
+    }
+
+    /** Installed versionName, read at runtime so no report can drift from build.gradle. */
+    public static String appVersion(Context context) {
+        try {
+            String name = context.getPackageManager()
+                    .getPackageInfo(context.getPackageName(), 0).versionName;
+            return name == null || name.isEmpty() ? "unknown" : name;
+        } catch (PackageManager.NameNotFoundException e) {
+            return "unknown";
+        }
     }
 }

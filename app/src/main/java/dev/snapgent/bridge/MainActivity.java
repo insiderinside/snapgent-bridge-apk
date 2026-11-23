@@ -347,7 +347,7 @@ public class MainActivity extends Activity {
         LinearLayout about = card();
         infoRow(about, "Application", "Snapgent Bridge");
         divider(about);
-        infoRow(about, "Version", "0.1.0");
+        infoRow(about, "Version", BridgeConfig.appVersion(this));
         divider(about);
         infoRow(about, "MCP protocol", "2025-06-18");
         divider(about);

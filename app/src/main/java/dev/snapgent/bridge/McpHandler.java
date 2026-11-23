@@ -21,12 +21,19 @@ public final class McpHandler {
     private final Context context;
     private final WorkspaceTools workspace;
     private final GitTools git;
+    private final String appVersion;
 
     public McpHandler(Context context) {
         this.context = context.getApplicationContext();
         this.workspace = new WorkspaceTools(this.context);
+        this.appVersion = BridgeConfig.appVersion(this.context);
         try { this.git = new GitTools(this.context.getFilesDir()); }
         catch (IOException e) { throw new IllegalStateException("Cannot initialize Git tools", e); }
+    }
+
+    /** Version name of the installed APK, so every report matches the build. */
+    public String appVersion() {
+        return appVersion;
     }
 
     public String handle(String message) {
@@ -67,7 +74,7 @@ public final class McpHandler {
         return new JSONObject()
                 .put("protocolVersion", version)
                 .put("capabilities", new JSONObject().put("tools", new JSONObject().put("listChanged", false)))
-                .put("serverInfo", new JSONObject().put("name", "snapgent-android-bridge").put("version", "0.1.0"));
+                .put("serverInfo", new JSONObject().put("name", "snapgent-android-bridge").put("version", appVersion));
     }
 
     private JSONObject listTools() throws JSONException {
@@ -142,7 +149,7 @@ public final class McpHandler {
                 .put("device", Build.DEVICE)
                 .put("androidVersion", Build.VERSION.RELEASE)
                 .put("sdk", Build.VERSION.SDK_INT)
-                .put("bridgeVersion", "0.1.0")
+                .put("bridgeVersion", appVersion)
                 .put("bridgeRunning", BridgeService.running)
                 .put("websocketHost", "127.0.0.1")
                 .put("websocketPort", BridgeConfig.port(context))

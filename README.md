@@ -2,14 +2,15 @@
 
 Android-native (Java 17) on-device bridge. It runs a loopback-only WebSocket server inside the phone and speaks both the MCP JSON-RPC protocol and the SnapgentV3 extension's native WebSocket protocol, so the Snapgent extension running in an Android browser can read files, edit a workspace, and drive Git on the device — without the desktop Python bridge.
 
-Current build: **0.1.1** (`dev.snapgent.bridge`, minSdk 26, targetSdk 34, versionCode 2).
+Current build: **0.1.2** (`dev.snapgent.bridge`, minSdk 26, targetSdk 34, versionCode 3).
 
 ## Download the release APK
 
-- Latest release: [Releases v0.1.1](https://github.com/insiderinside/snapgent-bridge-apk/releases/tag/v0.1.1) — asset `snapgent-bridge-0.1.1.apk`.
-- Install over ADB: `adb install -r snapgent-bridge-0.1.1.apk`, or open the asset link on the phone.
+- Latest release: [Releases v0.1.2](https://github.com/insiderinside/snapgent-bridge-apk/releases/tag/v0.1.2) — asset `snapgent-bridge-0.1.2.apk`.
+- Install over ADB: `adb install -r snapgent-bridge-0.1.2.apk`, or open the asset link on the phone.
+- Upgrading from the debug-signed `v0.1.0` needs `adb uninstall dev.snapgent.bridge` first; `v0.1.1` → `v0.1.2` upgrades in place because both use the release key.
 
-`v0.1.1` is signed with a dedicated **4096-bit RSA release keystore** (APK Signature Scheme v2):
+`v0.1.2` is signed with a dedicated **4096-bit RSA release keystore** (APK Signature Scheme v2):
 
 ```text
 Signer DN:      CN=Snapgent Bridge, OU=Release, O=insiderinside, L=Jakarta, ST=Jakarta, C=ID
@@ -20,6 +21,8 @@ Valid until:    2056-11-16
 The keystore itself is **not in this repository**. `app/build.gradle` loads it from `~/.android/snapgent-release/keystore.properties` (or the path in `SNAPGENT_KEYSTORE_PROPERTIES`) and falls back to the debug signing config with a warning when that file is absent, so a plain clone still builds. Keep the keystore backed up: Android only accepts updates signed by the same key, so losing it means users must uninstall before installing a future build.
 
 The earlier `v0.1.0` asset was signed with the Android debug keystore and is kept only for history.
+
+Since `v0.1.2` the version every endpoint reports is read from the installed package instead of a literal: `device_info.bridgeVersion`, the MCP `serverInfo.version`, the About screen, and the extension `connected` frame (`bridge_version: android-<versionName>`) all match `build.gradle`.
 
 ## Browser companion
 
@@ -62,7 +65,7 @@ The MCP port is configurable in the app (1024–65535, excluding the native port
 
 ## Compatibility
 
-The extension wire protocol was taken from the SnapgentV3 extension: the native endpoint greets a client with a `connected` frame (reporting `bridge_version: android-0.2.0` plus the full tool catalog), answers `ping`/`pong`, serves `list_tools`, executes `call_tool`, and accepts `restart_mcp`. `stream` and `progress` frames are accepted as fire-and-forget telemetry.
+The extension wire protocol was taken from the SnapgentV3 extension: the native endpoint greets a client with a `connected` frame (reporting `bridge_version: android-0.1.2` plus the full tool catalog), answers `ping`/`pong`, serves `list_tools`, executes `call_tool`, and accepts `restart_mcp`. `stream` and `progress` frames are accepted as fire-and-forget telemetry.
 
 Telemetry-only caveat: the bridge exposes no desktop `studio` runtime, so `studio_status` intentionally returns nulls.
 
