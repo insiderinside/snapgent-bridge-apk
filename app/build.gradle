@@ -1,4 +1,18 @@
+import java.util.Properties
+
 plugins { id 'com.android.application' }
+
+// Release signing material lives OUTSIDE the repository.
+// Override the location with SNAPGENT_KEYSTORE_PROPERTIES when building elsewhere.
+def keystorePropsFile = file(
+    System.getenv('SNAPGENT_KEYSTORE_PROPERTIES')
+        ?: "${System.getProperty('user.home')}/.android/snapgent-release/keystore.properties"
+)
+def keystoreProps = new Properties()
+def hasReleaseKeystore = keystorePropsFile.isFile()
+if (hasReleaseKeystore) {
+    keystorePropsFile.withInputStream { keystoreProps.load(it) }
+}
 
 android {
     namespace 'dev.snapgent.bridge'
@@ -7,13 +21,28 @@ android {
         applicationId 'dev.snapgent.bridge'
         minSdk 26
         targetSdk 34
-        versionCode 1
-        versionName '0.1.0'
+        versionCode 2
+        versionName '0.1.1'
+    }
+    signingConfigs {
+        release {
+            if (hasReleaseKeystore) {
+                storeFile file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
     }
     buildTypes {
         release {
-            // Internal release signing with the standard Android debug keystore.
-            signingConfig signingConfigs.debug
+            if (hasReleaseKeystore) {
+                signingConfig signingConfigs.release
+            } else {
+                logger.warn('snapgent: release keystore not found at ' + keystorePropsFile +
+                    ' — release build falls back to the debug signing config.')
+                signingConfig signingConfigs.debug
+            }
         }
     }
     compileOptions {

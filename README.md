@@ -2,14 +2,24 @@
 
 Android-native (Java 17) on-device bridge. It runs a loopback-only WebSocket server inside the phone and speaks both the MCP JSON-RPC protocol and the SnapgentV3 extension's native WebSocket protocol, so the Snapgent extension running in an Android browser can read files, edit a workspace, and drive Git on the device — without the desktop Python bridge.
 
-Current build: **0.1.0** (`dev.snapgent.bridge`, minSdk 26, targetSdk 34).
+Current build: **0.1.1** (`dev.snapgent.bridge`, minSdk 26, targetSdk 34, versionCode 2).
 
 ## Download the release APK
 
-- Latest release: [Releases v0.1.0](https://github.com/insiderinside/snapgent-bridge-apk/releases/tag/v0.1.0) — asset `snapgent-bridge-0.1.0.apk`.
-- Install over ADB: `adb install -r snapgent-bridge-0.1.0.apk`.
+- Latest release: [Releases v0.1.1](https://github.com/insiderinside/snapgent-bridge-apk/releases/tag/v0.1.1) — asset `snapgent-bridge-0.1.1.apk`.
+- Install over ADB: `adb install -r snapgent-bridge-0.1.1.apk`, or open the asset link on the phone.
 
-The published APK is signed with the standard Android **debug keystore** (`signingConfig signingConfigs.debug`) for internal testing. Re-sign with a private keystore before any wider distribution.
+`v0.1.1` is signed with a dedicated **4096-bit RSA release keystore** (APK Signature Scheme v2):
+
+```text
+Signer DN:      CN=Snapgent Bridge, OU=Release, O=insiderinside, L=Jakarta, ST=Jakarta, C=ID
+SHA-256 cert:   CA:67:7C:77:F2:F2:75:2A:1B:1E:7F:AE:6F:1D:B2:06:AA:D0:94:EF:74:9E:96:99:7F:2D:9A:DC:7B:3E:94:FB
+Valid until:    2056-11-16
+```
+
+The keystore itself is **not in this repository**. `app/build.gradle` loads it from `~/.android/snapgent-release/keystore.properties` (or the path in `SNAPGENT_KEYSTORE_PROPERTIES`) and falls back to the debug signing config with a warning when that file is absent, so a plain clone still builds. Keep the keystore backed up: Android only accepts updates signed by the same key, so losing it means users must uninstall before installing a future build.
+
+The earlier `v0.1.0` asset was signed with the Android debug keystore and is kept only for history.
 
 ## Browser companion
 
@@ -65,6 +75,8 @@ Requires JDK 17, Android SDK Platform 35 with Build Tools, and Gradle 8.7 (Andro
 ./gradlew assembleRelease   # app/build/outputs/apk/release/app-release.apk
 ```
 
+`assembleRelease` signs with the release keystore described above when `keystore.properties` is present. The file uses four keys: `storeFile`, `storePassword`, `keyAlias`, `keyPassword`. To build with your own key, point `SNAPGENT_KEYSTORE_PROPERTIES` at your properties file. Verify any built APK with `apksigner verify --print-certs app/build/outputs/apk/release/app-release.apk`.
+
 ## Tests
 
 End-to-end tests drive the real device over ADB (`adb -s <serial> forward tcp:1876x tcp:876x`):
@@ -78,4 +90,4 @@ python3 scripts/test_workspace_tools.py # workspace + tool catalog (expects 29 t
 ## Roadmap
 
 - Optional user-controlled auto-start on boot (preference exists, not wired to a boot receiver yet).
-- Release signing with a dedicated keystore and a versioned changelog per APK.
+- Versioned changelog per APK; CI workflow that builds and signs on tag (keystore injected as repository secrets).
