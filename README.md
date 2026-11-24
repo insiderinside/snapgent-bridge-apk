@@ -2,12 +2,12 @@
 
 Android-native (Java 17) on-device bridge. It runs a loopback-only WebSocket server inside the phone and speaks both the MCP JSON-RPC protocol and the SnapgentV3 extension's native WebSocket protocol, so the Snapgent extension running in an Android browser can read files, edit a workspace, and drive Git on the device — without the desktop Python bridge.
 
-Current build: **0.1.7** (`dev.snapgent.bridge`, minSdk 26, targetSdk 34, versionCode 9).
+Current build: **0.1.8** (`dev.snapgent.bridge`, minSdk 26, targetSdk 34, versionCode 10).
 
 ## Download the release APK
 
-- Latest release: [Releases v0.1.7](https://github.com/insiderinside/snapgent-bridge-apk/releases/tag/v0.1.7) — asset `snapgent-bridge-0.1.7.apk`.
-- Install over ADB: `adb install -r snapgent-bridge-0.1.7.apk`, or open the asset link on the phone.
+- Latest release: [Releases v0.1.8](https://github.com/insiderinside/snapgent-bridge-apk/releases/tag/v0.1.8) — asset `snapgent-bridge-0.1.8.apk`.
+- Install over ADB: `adb install -r snapgent-bridge-0.1.8.apk`, or open the asset link on the phone.
 - Upgrading from the debug-signed `v0.1.0` needs `adb uninstall dev.snapgent.bridge` first; every release since `v0.1.1` upgrades in place because they all use the release key.
 
 `v0.1.1` onwards are signed with a dedicated **4096-bit RSA release keystore** (APK Signature Scheme v2):
@@ -60,7 +60,7 @@ The MCP port is configurable in the app (1024–65535, excluding the native port
 
 **Embedded Python (2):** `run_python` (execute a snippet or a script file in the bundled CPython 3.8 runtime) and `python_info` (version, platform, bundled packages) — Chaquopy, prebuilt, so no NDK and no system Python are required on the phone. It ships the standard library plus `requests` 2.32.4 and `Pillow` 9.2.0 (with the `_imaging`/freetype/libjpeg native parts), packed at build time; there is no runtime `pip install`.
 
-**Render (4):** `render_still` (one HTML/Canvas/Three.js frame from an off-screen WebView, saved as PNG), `render_video` (H.264 MP4 through `MediaCodec`/`MediaMuxer`, calling `window.__snapgentSeek(ms)` per frame when the page defines it), `encode_frames` (PNG sequence to MP4) and `render_info` (WebView version plus the available H.264/AAC encoders). An optional 16-bit PCM WAV soundtrack is muxed as AAC, so no Playwright, FFmpeg or Termux is needed on the phone.
+**Render (4):** `render_still` (one HTML/Canvas/Three.js frame from an off-screen WebView, saved as PNG), `render_video` (H.264 MP4 through `MediaCodec`/`MediaMuxer`, calling `window.__snapgentSeek(ms)` per frame when the page defines it), `encode_frames` (PNG sequence to MP4) and `render_info` (WebView version plus the available H.264/AAC encoders). An optional 16-bit PCM WAV soundtrack is muxed as AAC, so no Playwright, FFmpeg or Termux is needed on the phone. `render_still` and `render_video` take `render_mode: gpu|software` (default `gpu`): the GPU path keeps the WebView hardware accelerated on an off-screen overlay and reads the frame back from a RenderNode through `HardwareRenderer` into an `ImageReader`, falling back to a `VirtualDisplay` and only then to the legacy software layer. That default matters because a software layer cannot contain WebGL at all — on a 640x360 raw WebGL shader the GPU path returns 146,814 unique colours against 1 for the software path.
 
 **Tool registry (4):** `tool_create`, `tool_delete`, `tool_list`, `tool_set_enabled` — the client can define its own MCP tools on the phone. A `python` definition runs inside the embedded interpreter with its arguments pre-parsed into the dict `ARGS`; an `http` definition sends a request with `{{arg}}` substitution in the URL, headers and body. Both appear in `tools/list` immediately, so a Mac-side agent can extend the bridge without rebuilding the APK.
 
@@ -125,6 +125,7 @@ python3 scripts/test_workspace_tools.py # workspace + tool catalog (expects 65 t
 python3 scripts/test_tool_registry.py   # custom python/http tools, switches, catalog count
 python3 scripts/test_python_packages.py # run_python: stdlib, requests, Pillow, output cap
 python3 scripts/test_render_tools.py    # render_still / encode_frames / render_info
+python3 scripts/test_render_gpu.py      # gpu vs software colour comparison on a real device
 python3 scripts/test_device_tools.py    # device control: dump, screenshot, taps, keys, app_launch
 ```
 
