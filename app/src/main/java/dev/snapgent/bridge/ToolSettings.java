@@ -6,22 +6,26 @@ import android.content.SharedPreferences;
 import org.json.JSONArray;
 import org.json.JSONException;
 
+import java.io.IOException;
 import java.util.HashSet;
 import java.util.Set;
 
 /**
- * Persisted per-tool switches plus the user-defined tool definitions.
+ * Persisted per-tool switches, plus a compatibility bridge to the custom tool store.
  *
- * <p>Both live in the same preferences file as the bridge config, so a single
- * "reset settings" clears them together. Nothing here touches app-private files:
- * a tool definition is small JSON, and keeping it in preferences means the tool
- * list survives a workspace reset.
+ * <p>The enable/disable set still lives in the {@code snapgent_bridge} preferences
+ * file, because it is a handful of names and always travels with the rest of the
+ * settings. Tool <em>definitions</em> moved to {@link CustomToolStore}: one JSON
+ * file per tool under {@code custom-tools/}, so an app update, a settings reset or
+ * one unreadable file can no longer take every custom tool down with it.
  */
 final class ToolSettings {
 
     static final String PREFS = "snapgent_bridge";
     private static final String KEY_DISABLED = "tools.disabled";
-    private static final String KEY_CUSTOM = "tools.custom";
+
+    /** Key older builds used for the whole custom tool list; only read to migrate. */
+    static final String LEGACY_CUSTOM_KEY = "tools.custom";
 
     private ToolSettings() {
     }
@@ -50,14 +54,19 @@ final class ToolSettings {
     }
 
     static JSONArray customTools(Context context) {
+        return CustomToolStore.load(context);
+    }
+
+    static void saveCustomTools(Context context, JSONArray tools) throws IOException {
+        CustomToolStore.save(context, tools);
+    }
+
+    /** Kept for callers that only need the old JSON parse, without touching disk order. */
+    static JSONArray parse(String raw) {
         try {
-            return new JSONArray(prefs(context).getString(KEY_CUSTOM, "[]"));
+            return new JSONArray(raw);
         } catch (JSONException e) {
             return new JSONArray();
         }
-    }
-
-    static void saveCustomTools(Context context, JSONArray tools) {
-        prefs(context).edit().putString(KEY_CUSTOM, tools.toString()).apply();
     }
 }

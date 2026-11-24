@@ -23,11 +23,15 @@ import java.util.regex.Pattern;
 /**
  * User-defined MCP tools that live on the device.
  *
- * <p>A definition is small JSON stored in {@link ToolSettings}: either a
- * {@code python} snippet executed by the embedded interpreter, or an
- * {@code http} request whose URL/body/headers may reference arguments as
- * {@code {{name}}}. Both kinds become ordinary MCP tools in {@code tools/list},
- * so a client on the Mac sees them exactly like the built-in ones.
+ * <p>A definition is small JSON stored by {@link CustomToolStore} as one file per
+ * tool under {@code custom-tools/}: either a {@code python} snippet executed by the
+ * embedded interpreter, or an {@code http} request whose URL/body/headers may
+ * reference arguments as {@code {{name}}}. Both kinds become ordinary MCP tools in
+ * {@code tools/list}, so a client on the Mac sees them exactly like the built-in ones.
+ *
+ * <p>Keeping one file per tool is deliberate: tool definitions belong to whoever
+ * wrote them, so an app update must not be able to take them away, and a single
+ * broken file never costs the user the rest of their tools.
  *
  * <p>The management tools ({@code tool_create}, {@code tool_delete},
  * {@code tool_list}, {@code tool_set_enabled}) are always available, including
@@ -270,7 +274,10 @@ final class CustomTools {
                     .put("enabled", ToolSettings.isEnabled(context, name))
                     .put("description", definition.optString("description")));
         }
-        return new JSONObject().put("count", tools.length()).put("tools", tools).toString();
+        return new JSONObject().put("count", tools.length()).put("tools", tools)
+                .put("custom_tools_dir", CustomToolStore.DIR)
+                .put("custom_tools_files", new JSONArray(CustomToolStore.fileNames(context)))
+                .toString();
     }
 
     private String runDefinition(String name, JSONObject args) throws IOException, JSONException {
