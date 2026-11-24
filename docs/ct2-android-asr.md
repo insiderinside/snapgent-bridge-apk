@@ -239,9 +239,16 @@ addons/asr-tools/install-asr-bridge-tools.py --only asr_transcribe
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `asr_transcribe` | `path`, `lang=id`, `vad=1`, `wait_s=45`, `port=18125` | `text`, `segments[]`, `words[]`, `timing`, or `state=running` + `job` |
-| `asr_job` | `id`, `wait_s=5`, `port` | the finished payload |
-| `asr_health` | `port` | daemon `/health` |
+| `asr_transcribe` | `path`, `service=base`, `lang=id`, `vad=1`, `wait_s=45`, `port` | `text`, `segments[]`, `words[]`, `timing`, or `state=running` + `job` |
+| `asr_job` | `id`, `service=base`, `wait_s=5`, `port` | the finished payload |
+| `asr_health` | `service=base`, `all=1`, `port` | one daemon `/health`, or every service with `live[]` |
+
+`service` picks the daemon (`base` = 18125, `small` = 18126); an explicit `port`
+overrides it. `asr_health` accepts `all=1` to list every service at once:
+
+```json
+{"ok": true, "state": "ready", "live": ["base", "small"], "services": [...]}
+```
 
 `asr_transcribe` uploads the WAV bytes, so the file only has to be readable by the app
 (its own storage, `/sdcard/Download`, or `/data/local/tmp` where the mode allows it).
@@ -250,3 +257,42 @@ addons/asr-tools/install-asr-bridge-tools.py --only asr_transcribe
 Measured through the bridge (not the CLI): 65 s clip → `words_total=118`,
 `total=36.4 s` in the payload; a 215 s clip submitted with `wait_s=2` came back
 `state=running`, and `asr_job` returned `done` after 33 s of polling.
+
+### Service-aware tool state
+
+A tool call against a stopped daemon used to burn the whole timeout. Every tool now
+runs a 1.5 s pre-flight `/health` and, when nothing answers, returns immediately:
+
+```json
+{"ok": false, "state": "service_down", "service": "small", "port": 18126,
+ "hint": "start it with: ASR_MODEL=... ASR_PORT=18126 addons/asr-tools/asr-daemon.sh start"}
+```
+
+The registry follows the services instead of staying stale:
+`asr-tools/asr-service-sync.py` forwards both ports, probes them, and calls
+`tool_set_enabled` for all three tools — enabled while any service is live, disabled
+when none is. `asr-daemon.sh` runs that sync after the ready line and after a stop
+(`ASR_SYNC_TOOLS=0` turns it off). Measured timings for the rule:
+
+| Situation | Result |
+|---|---|
+| all services stopped | three tools `enabled=False`; a call is refused before Python runs |
+| `base` started | three tools `enabled=True` |
+| `base` running, `small` started later | still enabled, `asr_health all=1` → `live: ["base","small"]` |
+| `small` stopped, `base` alive | still enabled |
+| all stopped, then `base` restarted | enabled again — no reinstall |
+
+A disabled tool is refused by the bridge (`McpHandler`) with
+`Tool is switched off on the device: <name>. Enable it in the Snapgent Bridge settings
+or with tool_set_enabled.`
+
+### Gotchas found while wiring this up
+
+- `wait "$launch"` after backgrounding the on-device start hung the script even after
+  it printed `ready`. Launch with `setsid` and drop the `wait`.
+- The macOS shell has no `timeout`, so a start that never returns has to be guarded
+  from the host side (`timeoutMs` / a background job), not with coreutils.
+- Probe the service ports **after** `adb forward`; a live daemon whose port is not
+  forwarded reads as dead and would switch the tools off.
+- `asr-service-sync.py` reads `/health` only — it never starts a daemon, so it cannot
+  loop: a stopped service simply means "off".

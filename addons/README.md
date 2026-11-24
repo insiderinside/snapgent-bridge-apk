@@ -24,6 +24,7 @@ bionic wheels), so the engine is cross-compiled for `arm64-v8a`.
 | `ct2-whisper/compare-word-timings.py` | Compares a result against ground truth (precision/recall, start/end error) |
 | `asr-tools/asr-daemon.sh` | Starts, stops and reports the shell-user daemon |
 | `asr-tools/install-asr-bridge-tools.py` | Installs the three bridge tools over the loopback WebSocket |
+| `asr-tools/asr-service-sync.py` | Switches the three tools on/off from whether any ASR service answers |
 | `asr-tools/asr-bridge-tools/*.py` | The tool snippets: `asr_transcribe`, `asr_job`, `asr_health` |
 
 The engine cannot run inside the app — an app process may not exec a binary from
@@ -42,6 +43,34 @@ addons/asr-tools/install-asr-bridge-tools.py    # installs/refreshes all three t
 
 Remove the add-on again with `asr-tools/asr-daemon.sh stop` and `tool_delete` for
 the three tools; nothing stays behind in the app or the APK.
+
+### Switch the tools off while no ASR service runs
+
+A stopped daemon used to leave three tools that hung for the full tool timeout and
+then failed. They now follow one rule:
+
+> the three ASR tools are enabled while **any** ASR service answers, and switched
+> off when **none** does — one start/stop of either service flips all three.
+
+That state lives in the bridge's own tool settings (`tool_set_enabled`), not in a
+new field of the tool definition, so a disabled tool is refused at the MCP boundary
+before any Python runs.
+
+```bash
+addons/asr-tools/asr-daemon.sh start        # syncs automatically after the ready line
+addons/asr-tools/asr-service-sync.py        # or run the rule by hand
+addons/asr-tools/asr-service-sync.py --dry-run   # what it would change, changes nothing
+ASR_SYNC_TOOLS=0 addons/asr-tools/asr-daemon.sh start   # start without touching the rule
+```
+
+`asr-service-sync.py` forwards both service ports first, then probes `base`
+(18125) and `small` (18126). Without the forward a running daemon looks dead, and
+the rule would switch the tools off. Any live service keeps them on: starting
+`small` later while `base` already runs leaves everything enabled, and starting a
+service again re-enables tools that were switched off — no reinstall needed.
+
+A tool that is called while its service is down now answers immediately with
+`state=service_down` plus the command to start that service, instead of waiting.
 
 ### Proof
 

@@ -39,18 +39,35 @@ PORT_ARG = {
     "type": "integer",
 }
 
+SERVICE_ARG = {
+    "name": "service",
+    "description": "Which daemon: base (18125, default) or small (18126, slower but more accurate)",
+    "required": False,
+    "type": "string",
+}
+
 TOOLS = {
     "asr_health": {
-        "description": "Check that the local ASR daemon answers on 127.0.0.1:18125.",
-        "params": [PORT_ARG],
+        "description": (
+            "Check whether the local ASR daemon answers. Returns state=ready with the "
+            "loaded model, or state=service_down (fast, never a timeout) plus the command "
+            "that starts it. all=1 probes base and small together."
+        ),
+        "params": [
+            SERVICE_ARG,
+            {"name": "all", "description": "1 to probe every known service (base and small)",
+             "required": False, "type": "integer"},
+            PORT_ARG,
+        ],
         "timeout_ms": 15_000,
     },
     "asr_transcribe": {
         "description": (
             "Transcribe a WAV recording on this device with the local CTranslate2/Whisper "
-            "daemon (word timestamps, int8, base model). Returns text, segments and "
-            "words[] with start/end seconds. Long audio returns state=running plus a job "
-            "id to collect with asr_job."
+            "daemon (word timestamps, int8). Returns text, segments and words[] with "
+            "start/end seconds. Long audio returns state=running plus a job id to collect "
+            "with asr_job. If the daemon is down the answer is state=service_down, not a "
+            "timeout."
         ),
         "params": [
             {"name": "path", "description": "Absolute path of a 16 kHz mono WAV on the device",
@@ -61,17 +78,19 @@ TOOLS = {
              "required": False, "type": "integer"},
             {"name": "wait_s", "description": "Seconds to wait for the result before returning the job id (default 45, max 45)",
              "required": False, "type": "number"},
+            SERVICE_ARG,
             PORT_ARG,
         ],
         "timeout_ms": 60_000,
     },
     "asr_job": {
-        "description": "Collect the result of an asr_transcribe job that was still running (state=running).",
+        "description": "Collect the result of an asr_transcribe job that was still running (state=running). Answers state=service_down if the daemon stopped meanwhile.",
         "params": [
             {"name": "id", "description": "Job id returned by asr_transcribe",
              "required": True, "type": "string"},
             {"name": "wait_s", "description": "Seconds to wait for completion (default 5, max 45)",
              "required": False, "type": "number"},
+            SERVICE_ARG,
             PORT_ARG,
         ],
         "timeout_ms": 60_000,

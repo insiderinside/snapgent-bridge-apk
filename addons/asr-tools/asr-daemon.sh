@@ -10,8 +10,13 @@
 #   addons/asr-tools/asr-daemon.sh logs
 #   addons/asr-tools/asr-daemon.sh stop
 #
+# start and stop also switch the three ASR bridge tools in the registry, through
+# asr-service-sync.py: they are enabled while any service answers and disabled
+# once every service is down, so tool_list never offers a tool that cannot run.
+#
 # Environment overrides: ASR_PORT (18125), ASR_MODEL (/data/local/tmp/ct2/model-base),
-# ASR_BEAM (5), ASR_THREADS (6), ASR_COMPUTE (int8), ASR_MIN_SPEECH (0.25).
+# ASR_BEAM (5), ASR_THREADS (6), ASR_COMPUTE (int8), ASR_MIN_SPEECH (0.25),
+# ASR_SYNC_TOOLS (1; set 0 to leave the tool registry untouched).
 set -euo pipefail
 
 ROOT=/data/local/tmp/ct2
@@ -24,6 +29,19 @@ MIN_SPEECH=${ASR_MIN_SPEECH:-0.25}
 BIN=${ASR_BIN:-$ROOT/whisper_ct2_arm64}
 LOG=$ROOT/serve-$PORT.log
 
+# Keep the registry in step with the daemons: enabled while any service answers,
+# disabled once every service is down. Failures here must never fail start/stop.
+sync_tools() {
+  [ "${ASR_SYNC_TOOLS:-1}" = "0" ] && return 0
+  local script
+  script="$(cd "$(dirname "$0")" && pwd)/asr-service-sync.py"
+  [ -f "$script" ] || return 1
+  python3 "$script" --quiet >/dev/null 2>&1 || {
+    echo "note: bridge not reachable, tool registry left as it was" >&2
+    return 1
+  }
+}
+
 # `ps -A -o PID,CMD` truncates the command to 15 characters on Android, so match the
 # real command line from /proc instead. pidof still finds the process by binary name.
 pids() {
@@ -34,16 +52,22 @@ pids() {
 start() {
   if [ -n "$(pids)" ]; then
     echo "daemon already running on $PORT (pid $(pids))"
+    sync_tools
     return 0
   fi
   adb shell "test -x $BIN" || { echo "missing $BIN on the device" >&2; return 1; }
   adb shell "test -d $MODEL" || { echo "missing model directory $MODEL on the device" >&2; return 1; }
-  adb shell "cd $ROOT && LD_LIBRARY_PATH=$ROOT nohup $BIN --serve $PORT $MODEL $ROOT/mel80.bin $BEAM $THREADS $COMPUTE $MIN_SPEECH > $LOG 2>&1 &" >/dev/null 2>&1 || true
+  # setsid detaches the daemon inside Android, and this adb call is backgrounded
+  # too: it keeps waiting for the daemon it started, which is what used to make
+  # `start` hang forever.
+  adb shell "rm -f $LOG" >/dev/null 2>&1 || true
+  adb shell "cd $ROOT && LD_LIBRARY_PATH=$ROOT setsid $BIN --serve $PORT $MODEL $ROOT/mel80.bin $BEAM $THREADS $COMPUTE $MIN_SPEECH > $LOG 2>&1 < /dev/null &" >/dev/null 2>&1 </dev/null &
 
   for _ in $(seq 1 40); do
     sleep 0.5
     if adb shell "grep -q '^ready:' $LOG 2>/dev/null"; then
       adb shell "grep '^ready:' $LOG" | tr -d '\r'
+      sync_tools
       return 0
     fi
   done
@@ -57,12 +81,14 @@ stop() {
   current=$(pids)
   if [ -z "$current" ]; then
     echo "no daemon on $PORT"
+    sync_tools
     return 0
   fi
   for pid in $current; do
     adb shell "kill -9 $pid" >/dev/null 2>&1 || true
   done
   echo "stopped daemon on $PORT (pid $(echo $current | tr ' ' ','))"
+  sync_tools
 }
 
 status() {
