@@ -23,6 +23,7 @@ bionic wheels), so the engine is cross-compiled for `arm64-v8a`.
 | `ct2-whisper/bench-asr-presets.sh` | Runs the measured presets on the device and prints timings |
 | `ct2-whisper/compare-word-timings.py` | Compares a result against ground truth (precision/recall, start/end error) |
 | `asr-tools/asr-daemon.sh` | Starts, stops and reports the shell-user daemon |
+| `asr-tools/asr-ctl.c`, `build-asr-ctl.sh` | `asr-ctl`: the loopback controller behind the app's **▶ Start** / **■ Stop** buttons |
 | `asr-tools/install-asr-bridge-tools.py` | Installs the three bridge tools over the loopback WebSocket |
 | `asr-tools/asr-service-sync.py` | Switches the three tools on/off from whether any ASR service answers |
 | `asr-tools/asr-bridge-tools/*.py` | The tool snippets: `asr_transcribe`, `asr_job`, `asr_health` |
@@ -43,6 +44,29 @@ addons/asr-tools/install-asr-bridge-tools.py    # installs/refreshes all three t
 
 Remove the add-on again with `asr-tools/asr-daemon.sh stop` and `tool_delete` for
 the three tools; nothing stays behind in the app or the APK.
+
+### Start and stop from the app
+
+The **⛁ Svc** page can start and stop a service without a Mac. The app may not exec
+the daemon, so the buttons talk to `asr-ctl` — a ~15 KB C program that runs as the
+shell user and answers `/status`, `/start?name=…` and `/stop?name=…` on
+`127.0.0.1:18124`. It reads the same names a tool declaration uses, from
+`/data/local/tmp/ct2/asr-services.conf`.
+
+```bash
+addons/asr-tools/build-asr-ctl.sh --push   # build with the NDK and push the binary
+addons/asr-tools/asr-daemon.sh ctl start   # push, write the conf, run it (until reboot)
+addons/asr-tools/asr-daemon.sh ctl status  # what it sees, incl. pids
+addons/asr-tools/asr-daemon.sh ctl stop
+```
+
+Two file-descriptor details matter and are handled in `asr-ctl.c`: the reply socket
+and the listener are both close-on-exec. A daemon is forked from the controller, so
+without that the child inherits the reply socket — the caller reads the JSON, then
+waits for an EOF that never comes and reports "no answer" after 20 s on every Start —
+and it inherits the listener, which keeps port 18124 bound after a controller restart
+so the replacement cannot bind. `ctl restart` handles both (kill, wait, start) and
+`ctl start` retries for a few seconds while a just-closed port drains.
 
 ### Switch the tools off while no ASR service runs
 

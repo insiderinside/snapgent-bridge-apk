@@ -100,14 +100,119 @@ status() {
   adb shell "grep '^ready:' $LOG 2>/dev/null | tail -1" | tr -d '\r' || true
 }
 
+# ------------------------------------------------ controller (on/off from the app)
+#
+# The Services page can start and stop a service, but the app may not exec the
+# daemon itself, so the buttons talk to asr-ctl: a tiny loopback server that runs
+# as the shell user (see asr-ctl.c). Install it once; it survives until reboot.
+CTL_PORT=${ASR_CTL_PORT:-18124}
+CTL_BIN=$ROOT/asr-ctl
+CTL_CONF=$ROOT/asr-services.conf
+CTL_LOG=$ROOT/asr-ctl.log
+
+ctl_pid() { adb shell pidof asr-ctl 2>/dev/null | tr -d '\r' || true; }
+
+ctl_conf() {
+  adb shell "printf '# name port model beam threads compute min_speech\nbase 18125 /data/local/tmp/ct2/model-base 5 6 int8 0.25\nsmall 18126 /data/local/tmp/ct2/model 5 6 int8 0.25\n' > $CTL_CONF"
+}
+
+ctl_install() {
+  local here
+  here="$(cd "$(dirname "$0")" && pwd)"
+  [ -x "$here/build/asr-ctl" ] || "$here/build-asr-ctl.sh"
+  adb push "$here/build/asr-ctl" "$CTL_BIN" >/dev/null
+  adb shell chmod 755 "$CTL_BIN"
+  ctl_conf
+  echo "installed $CTL_BIN and $CTL_CONF"
+}
+
+ctl_start() {
+  local pid attempt
+  pid=$(ctl_pid)
+  if [ -n "$pid" ]; then
+    echo "controller already running (pid $pid)"
+    return 0
+  fi
+  ctl_install
+  for attempt in 1 2 3 4 5; do
+    adb shell "cd $ROOT && rm -f $CTL_LOG" >/dev/null 2>&1 || true
+    # Same lesson as the daemon itself: setsid inside, and nothing waits for it here,
+    # otherwise the launch would be the thing that hangs.
+    adb shell "cd $ROOT && (setsid ./asr-ctl $CTL_PORT > $CTL_LOG 2>&1 < /dev/null &)" >/dev/null 2>&1
+    for _ in $(seq 1 20); do
+      sleep 0.2
+      if adb shell "grep -q '^ready:' $CTL_LOG 2>/dev/null"; then
+        adb shell "grep '^ready:' $CTL_LOG" | tr -d '\r'
+        return 0
+      fi
+    done
+    # A controller killed a moment ago can leave loopback connections behind, and
+    # bind fails until they drain: wait for that instead of reporting a dead start.
+    if ! adb shell "grep -q 'Address already in use' $CTL_LOG 2>/dev/null"; then
+      break
+    fi
+    echo "port $CTL_PORT still busy, retrying ($attempt)" >&2
+    sleep 1
+  done
+  echo "controller did not start; last log lines:" >&2
+  adb shell "tail -5 $CTL_LOG 2>/dev/null" >&2 || true
+  return 1
+}
+
+ctl_stop() {
+  local pid
+  pid=$(ctl_pid)
+  if [ -z "$pid" ]; then
+    echo "controller not running"
+    return 0
+  fi
+  adb shell "kill $pid" >/dev/null 2>&1 || true
+  echo "stopped controller (pid $pid)"
+}
+
+ctl_restart() {
+  local pid
+  pid=$(ctl_pid)
+  if [ -n "$pid" ]; then
+    adb shell "kill $pid" >/dev/null 2>&1 || true
+    echo "stopped controller (pid $pid)"
+    sleep 0.5
+  fi
+  ctl_start
+}
+
+ctl_status() {
+  local pid
+  pid=$(ctl_pid)
+  if [ -z "$pid" ]; then
+    echo "controller stopped (port $CTL_PORT)"
+    return 1
+  fi
+  echo "controller running: pid $pid on 127.0.0.1:$CTL_PORT"
+  adb shell "cat $CTL_CONF 2>/dev/null" | tr -d '\r' || true
+}
+
 case "${1:-start}" in
   start) start ;;
   stop) stop ;;
   restart) stop; start ;;
   status) status ;;
   logs) adb shell "tail -${2:-30} $LOG" | tr -d '\r' ;;
+  ctl)
+    case "${2:-status}" in
+      install) ctl_install ;;
+      start) ctl_start ;;
+      restart) ctl_restart ;;
+      stop) ctl_stop ;;
+      status) ctl_status ;;
+      *)
+        echo "usage: $0 ctl {install|start|restart|stop|status}" >&2
+        exit 2
+        ;;
+    esac
+    ;;
   *)
-    echo "usage: $0 {start|stop|restart|status|logs [lines]}" >&2
+    echo "usage: $0 {start|stop|restart|status|logs [lines]|ctl {install|start|restart|stop|status}}" >&2
     exit 2
     ;;
 esac

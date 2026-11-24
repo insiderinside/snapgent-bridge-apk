@@ -613,6 +613,11 @@ public class MainActivity extends Activity {
         if (LocalServices.needsCheck(services)) {
             LocalServices.refreshAsync(this, () -> { if (page.equals("services")) renderPage(); });
         }
+        // The controller is what can actually start or stop a daemon; the check is
+        // cheap but goes over a socket, so it never runs on the UI thread.
+        if (ServiceControl.needsCheck()) {
+            ServiceControl.checkAsync(() -> { if (page.equals("services")) renderPage(); });
+        }
 
         int links = 0;
         for (LocalServices.Service service : services) links += service.tools.size();
@@ -624,9 +629,18 @@ public class MainActivity extends Activity {
         Button probe = button("↻ Probe now", false);
         probe.setOnClickListener(v -> {
             LocalServices.refreshAsync(this, () -> { if (page.equals("services")) renderPage(); });
+            ServiceControl.checkAsync(null);
             toast("Probing local services");
         });
         summary.addView(probe, new LinearLayout.LayoutParams(-1, dp(44)));
+        Boolean controller = ServiceControl.available();
+        TextView controlState = text(
+                controller == null ? "controller asr-ctl: checking…"
+                        : controller ? "controller asr-ctl: reachable on 127.0.0.1:" + ServiceControl.PORT
+                        : "controller asr-ctl: not running — start/stop is unavailable",
+                11, false, Boolean.TRUE.equals(controller) ? green : muted);
+        controlState.setPadding(0, dp(8), 0, 0);
+        summary.addView(controlState);
         addCard(summary);
 
         if (services.isEmpty()) {
@@ -660,9 +674,68 @@ public class MainActivity extends Activity {
             serviceCard.addView(text(service.enabledCount() + " of " + service.tools.size() + " enabled"
                     + (service.allDisabled() ? " — every call is refused while all are off" : ""), 11, false, muted));
             spaceIn(serviceCard, 8);
-            serviceCard.addView(text("The bridge only watches this port; the service itself runs outside the app.", 11, false, muted));
+            addServiceActions(serviceCard, service, Boolean.TRUE.equals(state), ServiceControl.available());
             addCard(serviceCard);
         }
+    }
+
+    /**
+     * One service's Start/Stop row, or a sentence explaining why there is none.
+     *
+     * <p>The buttons do not touch a process directly: they ask {@code asr-ctl} on the
+     * device (shell user) to do it, because an app uid may not exec the daemon.
+     */
+    private void addServiceActions(LinearLayout parent, LocalServices.Service service,
+                                   boolean up, Boolean controller) {
+        if (!service.named()) {
+            parent.addView(text("No declared name, so the controller cannot address this port. "
+                    + "Declare it in a tool comment: # snapgent-service: base=18125", 11, false, muted));
+            return;
+        }
+        if (Boolean.FALSE.equals(controller)) {
+            parent.addView(text("Start and stop need asr-ctl on the device (shell user). "
+                    + "Install it once with addons/asr-tools/asr-daemon.sh ctl start.", 11, false, muted));
+            return;
+        }
+        boolean known = Boolean.TRUE.equals(controller);
+        LinearLayout buttons = row();
+        Button start = button("▶ Start", false);
+        Button stop = button("■ Stop", false);
+        start.setEnabled(known && !up);
+        stop.setEnabled(known && up);
+        start.setAlpha(known && !up ? 1f : 0.4f);
+        stop.setAlpha(known && up ? 1f : 0.4f);
+        start.setOnClickListener(v -> runServiceAction(service, "start"));
+        stop.setOnClickListener(v -> runServiceAction(service, "stop"));
+        LinearLayout.LayoutParams left = new LinearLayout.LayoutParams(0, dp(42), 1);
+        left.setMargins(0, 0, dp(5), 0);
+        buttons.addView(start, left);
+        LinearLayout.LayoutParams right = new LinearLayout.LayoutParams(0, dp(42), 1);
+        right.setMargins(dp(5), 0, 0, 0);
+        buttons.addView(stop, right);
+        parent.addView(buttons);
+        spaceIn(parent, 6);
+        parent.addView(text(known
+                ? "Runs through asr-ctl as the device's shell user; the app itself may not exec a daemon."
+                : "Checking the controller…", 11, false, muted));
+    }
+
+    private void runServiceAction(LocalServices.Service service, String action) {
+        String name = service.title();
+        toast(("start".equals(action) ? "Starting " : "Stopping ") + name + "…");
+        ServiceControl.actAsync(action, name, (ok, message) -> {
+            toast(message);
+            BridgeLog.info("Services", action + " " + name + " -> ok=" + ok + " " + message);
+            // The controller answers once the new daemon is ready, but the port may
+            // need a moment more before it accepts; clearing the cache at once made
+            // the page keep the previous dot.
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                LocalServices.forget();
+                ServiceControl.checkAsync(null);
+                BridgeLog.info("Services", "re-probing after " + action + " " + name);
+                if (page.equals("services")) renderPage();
+            }, 500);
+        });
     }
 
     /** Small marker on a tool row: the loopback service the tool is bound to, and whether it answers. */

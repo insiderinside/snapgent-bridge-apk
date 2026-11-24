@@ -25,8 +25,8 @@ android {
         applicationId 'dev.snapgent.bridge'
         minSdk 26
         targetSdk 34
-        versionCode 12
-        versionName '0.2.0'
+        versionCode 14
+        versionName '0.3.1'
         // The embedded Python runtime ships one native lib per ABI. Phones are arm64;
         // x86_64 is only needed for emulators, so keep the APK small.
         ndk { abiFilters 'arm64-v8a' }

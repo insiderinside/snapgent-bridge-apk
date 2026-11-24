@@ -2,12 +2,12 @@
 
 Android-native (Java 17) on-device bridge. It runs a loopback-only WebSocket server inside the phone and speaks both the MCP JSON-RPC protocol and the SnapgentV3 extension's native WebSocket protocol, so the Snapgent extension running in an Android browser can read files, edit a workspace, and drive Git on the device — without the desktop Python bridge.
 
-Current build: **0.2.0** (`dev.snapgent.bridge`, minSdk 26, targetSdk 34, versionCode 12). Latest published release: **v0.1.9**.
+Current build: **0.3.1** (`dev.snapgent.bridge`, minSdk 26, targetSdk 34, versionCode 14). Latest published release: **v0.3.1**.
 
 ## Download the release APK
 
-- Latest release: [Releases v0.1.9](https://github.com/insiderinside/snapgent-bridge-apk/releases/tag/v0.1.9) — asset `snapgent-bridge-0.1.9.apk`.
-- Install over ADB: `adb install -r snapgent-bridge-0.1.9.apk`, or open the asset link on the phone.
+- Latest release: [Releases v0.3.1](https://github.com/insiderinside/snapgent-bridge-apk/releases/tag/v0.3.1) — asset `snapgent-bridge-0.3.1.apk`.
+- Install over ADB: `adb install -r snapgent-bridge-0.3.1.apk`, or open the asset link on the phone.
 - Upgrading from the debug-signed `v0.1.0` needs `adb uninstall dev.snapgent.bridge` first; every release since `v0.1.1` upgrades in place because they all use the release key.
 
 `v0.1.1` onwards are signed with a dedicated **4096-bit RSA release keystore** (APK Signature Scheme v2):
@@ -75,7 +75,9 @@ A service is discovered from the definition itself, so there is no second place 
 - an address in the code, URL, headers or body: `127.0.0.1:18125`, `localhost:18126`;
 - an optional naming comment, which is the only way a service gets a human name: `# snapgent-service: base=18125 small=18126`.
 
-The page only *observes* the port (a TCP connect with a 400 ms timeout) — it never starts or stops anything, because the bridge cannot exec binaries from its own storage. The probe runs on a background thread and the answer is cached for 10 s, so opening the page or the tool list never blocks on it; **↻ Probe now** forces a fresh check. A port found only as an address is shown as "Port 18125" rather than a guessed name.
+Each service card carries **▶ Start** and **■ Stop** whenever a controller is present. The bridge itself may not exec a daemon — an app uid cannot run a binary from its own storage — so the buttons ask **`asr-ctl`**, a small loopback server that runs as the device's shell user on `127.0.0.1:18124` (source and install: `addons/asr-tools/`). The card reports `controller asr-ctl: reachable` when it answers, and says how to install it when it does not; without it the page still shows state, just without buttons. Start/Stop need a declared name, because that is the name the controller addresses.
+
+The probe itself is a TCP connect with a 400 ms timeout and runs on a background thread; the answer is cached for 10 s, so opening the page or the tool list never blocks on it, and **↻ Probe now** forces a fresh check. After a Start or Stop the cache is dropped and the page re-probes by itself, so the dot follows the action instead of the old 10 s window. A port found only as an address is shown as "Port 18125" rather than a guessed name.
 
 **Optional add-ons (`addons/`):** nothing here is built into the APK or enabled by default — skipping an add-on means not running its scripts. The local ASR add-on (`asr_transcribe`, `asr_job`, `asr_health`) transcribes a WAV on the phone with the real CTranslate2/faster-whisper engine and returns word-level timestamps, which Android's own recogniser does not provide. Install, proof and how to remove it again: [addons/README.md](addons/README.md); engine contract: [docs/ct2-android-asr.md](docs/ct2-android-asr.md).
 

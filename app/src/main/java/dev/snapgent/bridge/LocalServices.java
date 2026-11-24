@@ -62,6 +62,8 @@ final class LocalServices {
     private static final Map<Integer, Boolean> LIVE = new ConcurrentHashMap<>();
     private static final Map<Integer, Long> CHECKED_AT = new ConcurrentHashMap<>();
     private static final AtomicBoolean PROBING = new AtomicBoolean(false);
+    /** A probe asked for while another was running has to happen afterwards. */
+    private static final AtomicBoolean RERUN = new AtomicBoolean(false);
 
     private LocalServices() {
     }
@@ -216,6 +218,17 @@ final class LocalServices {
         return live;
     }
 
+    /**
+     * Drops every cached probe answer, so the next render probes again.
+     *
+     * <p>Called after a start or stop: waiting out the TTL would show the old dot
+     * next to the new daemon state, which reads like the button did nothing.
+     */
+    static void forget() {
+        LIVE.clear();
+        CHECKED_AT.clear();
+    }
+
     static boolean probed(List<Service> services) {
         for (Service service : services) {
             if (LIVE.containsKey(service.port)) return true;
@@ -229,7 +242,13 @@ final class LocalServices {
      * render loop cannot start threads faster than they finish.
      */
     static void refreshAsync(Context context, Runnable done) {
-        if (!PROBING.compareAndSet(false, true)) return;
+        if (!PROBING.compareAndSet(false, true)) {
+            // Dropping the request here is how a start/stop used to keep the old dot:
+            // the in-flight probe finished after the cache was cleared and wrote the
+            // stale answer back. Remember it and probe again once that one is done.
+            RERUN.set(true);
+            return;
+        }
         final List<Service> services = discover(context);
         Thread worker = new Thread(() -> {
             try {
@@ -237,7 +256,8 @@ final class LocalServices {
                 Set<Integer> present = new LinkedHashSet<>();
                 for (Service service : services) {
                     present.add(service.port);
-                    LIVE.put(service.port, probe(service.port));
+                    boolean answer = probe(service.port);
+                    LIVE.put(service.port, answer);
                     CHECKED_AT.put(service.port, now);
                 }
                 // Forget ports that no tool points at any more, so a removed tool cannot
@@ -252,6 +272,7 @@ final class LocalServices {
                 PROBING.set(false);
             }
             if (done != null) new Handler(Looper.getMainLooper()).post(done);
+            if (RERUN.compareAndSet(true, false)) refreshAsync(context, done);
         }, "snapgent-service-probe");
         worker.setDaemon(true);
         worker.start();
