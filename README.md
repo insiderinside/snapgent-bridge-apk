@@ -66,6 +66,8 @@ The MCP port is configurable in the app (1024–65535, excluding the native port
 
 A definition is one JSON file under `custom-tools/` in the workspace, so custom tools belong to whoever wrote them: an app update, a settings reset or one unreadable file cannot take the rest with it. `tool_list` reports `custom_tools_dir` and `custom_tools_files`, and the folder shows up in the Files page, which is also how a definition gets backed up or restored — dropping `<name>.json` in by hand makes it a working tool. Definitions written by builds before 0.1.9 are moved out of the preferences file automatically on first start.
 
+**Local ASR (3, custom tools this repo installs):** `asr_transcribe`, `asr_job` and `asr_health` transcribe a WAV on the phone with the real CTranslate2/faster-whisper engine and return word-level timestamps (`word`, `start`, `end`) — the shape the Snapgent voice-over sync expects. The engine runs as a shell-user daemon (`whisper_ct2_arm64 --serve`, see `docs/ct2-android-asr.md`) because an app-process exec of a binary from its own storage is refused, while a loopback socket is allowed; `scripts/asr-daemon.sh` starts it and `scripts/install-asr-bridge-tools.py` installs the tools over the bridge, so no APK rebuild is involved. Silence-aware VAD drops windows without speech: on a 215 s silence-padded clip the run went from 58.8 s to 35.6 s, and `base` beam 5 keeps p90 start error at 0.12 s against ground truth.
+
 ## App screens
 
 - **Home** — transport switch (native 17613 / MCP 8765), start/stop, live status, and quick actions into the other pages.
