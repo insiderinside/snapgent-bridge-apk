@@ -11,5 +11,10 @@
             </intent-filter>
         </activity>
         <service android:name=".BridgeService" android:exported="false" android:foregroundServiceType="dataSync"/>
+        <provider
+            android:name=".WorkspaceProvider"
+            android:authorities="dev.snapgent.bridge.files"
+            android:exported="false"
+            android:grantUriPermissions="true"/>
     </application>
 </manifest>

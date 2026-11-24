@@ -39,6 +39,13 @@ public class MainActivity extends Activity {
     private EditText portInput;
     private String page = "home";
     private String logFilter = "ALL";
+    // Files page state: path of the open folder ("" = workspace root) and the file being previewed.
+    private String fileDir = "";
+    private String fileView = null;
+    private static final int REQUEST_IMPORT_FILES = 2201;
+    private static final long MAX_IMPORT_BYTES = 256L * 1024 * 1024;
+    private static final long MAX_PREVIEW_BYTES = 1024L * 1024;
+    private static final int HEX_PREVIEW_BYTES = 1024;
     private int bg, surface, textColor, muted, accent, border, green;
 
     @Override public void onCreate(Bundle state) {
@@ -117,20 +124,33 @@ public class MainActivity extends Activity {
 
     private void showPage(String next) {
         page = next;
+        if (next.equals("files")) fileView = null;
         renderPage();
     }
 
     private void renderPage() {
         if (content == null) return;
         content.removeAllViews();
-        headerTitle.setText(page.equals("settings") ? "Settings" : page.equals("logs") ? "Activity Logs" : "Snapgent Bridge");
+        boolean viewing = page.equals("files") && fileView != null;
+        headerTitle.setText(viewing ? "File" : page.equals("settings") ? "Settings" : page.equals("logs") ? "Activity Logs"
+                : page.equals("tools") ? "Tools" : page.equals("files") ? "Files" : "Snapgent Bridge");
         headerAction.setText(page.equals("home") ? "⚙" : "‹");
+        if (viewing) {
+            headerAction.setOnClickListener(v -> { fileView = null; renderPage(); });
+        } else if (page.equals("files") && !fileDir.isEmpty()) {
+            headerAction.setOnClickListener(v -> { fileDir = parentDir(fileDir); fileView = null; renderPage(); });
+        } else {
+            headerAction.setOnClickListener(v -> showPage(page.equals("home") ? "settings" : "home"));
+        }
         bottomNav.removeAllViews();
-        addNavButton("⌂ Overview", "home");
+        addNavButton("⌂", "home");
+        addNavButton("⚒ Tools", "tools");
+        addNavButton("▤ Files", "files");
         addNavButton("≡ Logs", "logs");
-        addNavButton("⚙ Settings", "settings");
         if (page.equals("settings")) renderSettings();
         else if (page.equals("logs")) renderLogs();
+        else if (page.equals("tools")) renderTools();
+        else if (page.equals("files")) renderFiles();
         else renderDashboard();
     }
 
@@ -343,6 +363,8 @@ public class MainActivity extends Activity {
         security.addView(regenerate, new LinearLayout.LayoutParams(-1, dp(46)));
         addCard(security);
 
+        renderGitHubSettings();
+
         addSection("About", "Application information");
         LinearLayout about = card();
         infoRow(about, "Application", "Snapgent Bridge");
@@ -353,6 +375,815 @@ public class MainActivity extends Activity {
         divider(about);
         infoRow(about, "Storage", "App-private workspace");
         addCard(about);
+    }
+
+    private void renderGitHubSettings() {
+        addSection("GitHub", "Connect your GitHub account for remote repository operations");
+        LinearLayout github = card();
+        boolean configured = GitHubCredentials.isConfigured(this);
+
+        github.addView(text("GitHub account", 15, true));
+        github.addView(text("The username is detected from your validated token.", 12, false, muted));
+        spaceIn(github, 10);
+
+        EditText usernameInput = new EditText(this);
+        usernameInput.setSingleLine(true);
+        usernameInput.setInputType(InputType.TYPE_CLASS_TEXT);
+        usernameInput.setText(configured ? GitHubCredentials.username(this) : "");
+        usernameInput.setHint("GitHub username");
+        usernameInput.setEnabled(false);
+        usernameInput.setTextColor(textColor);
+        usernameInput.setHintTextColor(muted);
+        usernameInput.setPadding(dp(14), dp(10), dp(14), dp(10));
+        usernameInput.setBackground(round(surface, 12, border));
+        github.addView(usernameInput, new LinearLayout.LayoutParams(-1, dp(50)));
+        spaceIn(github, 10);
+
+        EditText tokenInput = new EditText(this);
+        tokenInput.setSingleLine(true);
+        tokenInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        tokenInput.setHint(configured ? "New Personal Access Token (optional)" : "GitHub Personal Access Token");
+        tokenInput.setTextColor(textColor);
+        tokenInput.setHintTextColor(muted);
+        tokenInput.setPadding(dp(14), dp(10), dp(14), dp(10));
+        tokenInput.setBackground(round(surface, 12, border));
+        github.addView(tokenInput, new LinearLayout.LayoutParams(-1, dp(50)));
+        spaceIn(github, 8);
+
+        TextView status = text(configured
+                ? "Credential saved securely using Android Keystore."
+                : "GitHub is not configured yet.", 12, false, muted);
+        github.addView(status);
+        spaceIn(github, 12);
+
+        Button save = button("Validate and save GitHub account", true);
+        save.setOnClickListener(v -> {
+            String candidateToken = tokenInput.getText().toString().trim();
+            save.setEnabled(false);
+            save.setText("Validating...");
+            status.setText("Connecting to GitHub...");
+
+            new Thread(() -> {
+                try {
+                    GitHubCredentials.Validation validation;
+                    if (candidateToken.isEmpty() && GitHubCredentials.isConfigured(this)) {
+                        validation = GitHubCredentials.validate(this);
+                    } else {
+                        validation = GitHubCredentials.validateToken(candidateToken);
+                    }
+                    if (!validation.authenticated) {
+                        throw new java.io.IOException("GitHub rejected the token (HTTP " + validation.statusCode + ")");
+                    }
+                    GitHubCredentials.save(this, validation.login, candidateToken);
+                    runOnUiThread(() -> {
+                        usernameInput.setText(validation.login);
+                        tokenInput.setText("");
+                        status.setText("Connected as @" + validation.login + (validation.scopes.isEmpty() ? "" : "\\nScopes: " + validation.scopes));
+                        status.setTextColor(green);
+                        save.setEnabled(true);
+                        save.setText("Validate and save GitHub account");
+                        toast("GitHub credentials saved securely");
+                    });
+                } catch (Exception e) {
+                    runOnUiThread(() -> {
+                        status.setText("Validation failed: " + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+                        status.setTextColor(Color.parseColor("#F05D6C"));
+                        save.setEnabled(true);
+                        save.setText("Validate and save GitHub account");
+                    });
+                }
+            }, "github-credential-validation").start();
+        });
+        github.addView(save, new LinearLayout.LayoutParams(-1, dp(46)));
+
+        if (configured) {
+            spaceIn(github, 8);
+            Button remove = button("Remove GitHub credentials", false);
+            remove.setOnClickListener(v -> new AlertDialog.Builder(this)
+                    .setTitle("Remove GitHub account?")
+                    .setMessage("GitHub clone, fetch, pull and push operations will stop working until credentials are configured again.")
+                    .setNegativeButton("Cancel", null)
+                    .setPositiveButton("Remove", (dialog, which) -> {
+                        try {
+                            GitHubCredentials.clear(this);
+                            toast("GitHub credentials removed");
+                            showPage("settings");
+                        } catch (Exception e) {
+                            toast("Cannot remove credentials: " + e.getMessage());
+                        }
+                    }).show());
+            github.addView(remove, new LinearLayout.LayoutParams(-1, dp(46)));
+        }
+        addCard(github);
+    }
+
+    // ---------------------------------------------------------------- tools page
+
+    private void renderTools() {
+        addLabel("TOOL REGISTRY");
+        addText("Tools", 25, true, textColor);
+        addText("Switch a tool off to hide it from MCP clients. Custom tools run on this device.", 13, false, muted);
+        space(18);
+
+        org.json.JSONArray summaries;
+        int enabledCount = 0;
+        int customCount = 0;
+        try {
+            summaries = new McpHandler(this).toolSummaries();
+        } catch (Exception e) {
+            addText("Cannot read the tool registry: " + e.getMessage(), 12, false, muted);
+            return;
+        }
+        for (int i = 0; i < summaries.length(); i++) {
+            org.json.JSONObject entry = summaries.optJSONObject(i);
+            if (entry == null) continue;
+            if (entry.optBoolean("enabled")) enabledCount++;
+            if ("custom".equals(entry.optString("kind"))) customCount++;
+        }
+
+        LinearLayout summary = card();
+        summary.addView(text(enabledCount + " of " + summaries.length() + " tools enabled", 18, true));
+        summary.addView(text(customCount + " custom tool" + (customCount == 1 ? "" : "s") + " on this device", 12, false, muted));
+        spaceIn(summary, 12);
+        LinearLayout summaryActions = row();
+        Button add = button("+  New tool", true);
+        add.setOnClickListener(v -> showCustomToolDialog());
+        Button enableAll = button("Enable all", false);
+        enableAll.setOnClickListener(v -> {
+            ToolSettings.setAllEnabled(this, true);
+            toast("All tools enabled");
+            renderPage();
+        });
+        summaryActions.addView(add, new LinearLayout.LayoutParams(0, dp(46), 1));
+        summaryActions.addView(new View(this), new LinearLayout.LayoutParams(dp(8), dp(46)));
+        summaryActions.addView(enableAll, new LinearLayout.LayoutParams(0, dp(46), 1));
+        summary.addView(summaryActions);
+        addCard(summary);
+
+        addSection("Built-in tools", "Shipped with Snapgent Bridge");
+        LinearLayout builtin = card();
+        boolean firstBuiltin = true;
+        for (int i = 0; i < summaries.length(); i++) {
+            org.json.JSONObject entry = summaries.optJSONObject(i);
+            if (entry == null || !"builtin".equals(entry.optString("kind"))) continue;
+            if (!firstBuiltin) divider(builtin);
+            firstBuiltin = false;
+            toolRow(builtin, entry);
+        }
+        addCard(builtin);
+
+        addSection("Custom tools", "Your own python or http tools, served over MCP");
+        LinearLayout customCard = card();
+        if (customCount == 0) {
+            customCard.addView(text("No custom tool yet", 14, true));
+            spaceIn(customCard, 6);
+            customCard.addView(text("Create one here, or let your MCP client call tool_create.", 12, false, muted));
+        } else {
+            boolean firstCustom = true;
+            for (int i = 0; i < summaries.length(); i++) {
+                org.json.JSONObject entry = summaries.optJSONObject(i);
+                if (entry == null || !"custom".equals(entry.optString("kind"))) continue;
+                if (!firstCustom) divider(customCard);
+                firstCustom = false;
+                toolRow(customCard, entry);
+            }
+        }
+        addCard(customCard);
+    }
+
+    private void toolRow(LinearLayout parent, org.json.JSONObject entry) {
+        String name = entry.optString("name");
+        LinearLayout item = row();
+        item.setPadding(0, dp(9), 0, dp(9));
+        LinearLayout labels = new LinearLayout(this);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        TextView title = text(name, 13, true);
+        title.setSingleLine(true);
+        TextView description = text(entry.optString("description", ""), 11, false, muted);
+        description.setSingleLine(true);
+        description.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        labels.addView(title);
+        labels.addView(description);
+        item.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
+
+        if ("custom".equals(entry.optString("kind"))) {
+            Button remove = button("✕", false);
+            remove.setTextSize(12);
+            remove.setMinWidth(dp(36));
+            remove.setPadding(0, 0, 0, 0);
+            remove.setOnClickListener(v -> confirmDeleteCustomTool(name));
+            item.addView(remove, new LinearLayout.LayoutParams(dp(36), dp(38)));
+        }
+
+        if ("management".equals(entry.optString("kind"))) {
+            // Always available: these are the tools that manage the others.
+            TextView always = text("always on", 11, true, green);
+            always.setPadding(dp(8), 0, dp(4), 0);
+            item.addView(always, new LinearLayout.LayoutParams(-2, -2));
+            parent.addView(item);
+            return;
+        }
+
+        Switch toggle = new Switch(this);
+        toggle.setChecked(entry.optBoolean("enabled", true));
+        toggle.setThumbTintList(ColorStateList.valueOf(toggle.isChecked() ? accent : muted));
+        toggle.setTrackTintList(ColorStateList.valueOf(border));
+        toggle.setOnCheckedChangeListener((button, checked) -> {
+            ToolSettings.setEnabled(this, name, checked);
+            toast(name + (checked ? " enabled" : " disabled"));
+        });
+        item.addView(toggle, new LinearLayout.LayoutParams(-2, dp(42)));
+        parent.addView(item);
+    }
+
+    private void showCustomToolDialog() {
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(20), dp(8), dp(20), 0);
+
+        EditText nameInput = toolInput("Tool name, e.g. fetch_page", InputType.TYPE_CLASS_TEXT);
+        EditText descriptionInput = toolInput("What it does", InputType.TYPE_CLASS_TEXT);
+        EditText codeInput = toolInput("Python code (arguments are in the dict ARGS) or an https URL", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        codeInput.setMinLines(4);
+        codeInput.setMaxLines(10);
+        codeInput.setGravity(Gravity.TOP | Gravity.START);
+
+        String[] kinds = {"python", "http"};
+        final String[] selectedKind = {"python"};
+        android.widget.Spinner spinner = new android.widget.Spinner(this);
+        spinner.setAdapter(new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
+                new String[]{"Python code", "HTTP request"}));
+        spinner.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
+                selectedKind[0] = kinds[position];
+                codeInput.setHint(position == 0
+                        ? "Python: result = ARGS.get('topic', '')\nprint('hello ' + result)"
+                        : "https://api.example.com/items/{{id}}");
+            }
+            @Override public void onNothingSelected(android.widget.AdapterView<?> parent) { }
+        });
+
+        form.addView(text("Name", 12, true, muted));
+        form.addView(nameInput, new LinearLayout.LayoutParams(-1, dp(48)));
+        spaceIn(form, 8);
+        form.addView(text("Description", 12, true, muted));
+        form.addView(descriptionInput, new LinearLayout.LayoutParams(-1, dp(48)));
+        spaceIn(form, 8);
+        form.addView(text("Kind", 12, true, muted));
+        form.addView(spinner, new LinearLayout.LayoutParams(-1, dp(48)));
+        spaceIn(form, 8);
+        form.addView(text("Body", 12, true, muted));
+        form.addView(codeInput, new LinearLayout.LayoutParams(-1, dp(150)));
+
+        new AlertDialog.Builder(this)
+                .setTitle("New custom tool")
+                .setView(form)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Create", (dialog, which) -> {
+                    String name = nameInput.getText().toString().trim();
+                    String description = descriptionInput.getText().toString().trim();
+                    String body = codeInput.getText().toString();
+                    new Thread(() -> {
+                        try {
+                            org.json.JSONObject args = new org.json.JSONObject()
+                                    .put("name", name)
+                                    .put("description", description.isEmpty() ? "Custom tool " + name : description)
+                                    .put("kind", selectedKind[0]);
+                            if ("python".equals(selectedKind[0])) args.put("code", body);
+                            else args.put("url", body.trim());
+                            java.util.Set<String> reserved = new java.util.HashSet<>();
+                            org.json.JSONArray existing = new McpHandler(this).toolSummaries();
+                            for (int i = 0; i < existing.length(); i++) {
+                                org.json.JSONObject entry = existing.optJSONObject(i);
+                                if (entry != null && "builtin".equals(entry.optString("kind"))) reserved.add(entry.optString("name"));
+                            }
+                            new CustomTools(this, new PythonTools(this)).execute("tool_create", args, reserved);
+                            runOnUiThread(() -> {
+                                toast("Tool created: " + name);
+                                page = "tools";
+                                renderPage();
+                            });
+                        } catch (Exception e) {
+                            runOnUiThread(() -> toast("Cannot create tool: " + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage())));
+                        }
+                    }, "custom-tool-create").start();
+                })
+                .show();
+    }
+
+    private EditText toolInput(String hint, int inputType) {
+        EditText input = new EditText(this);
+        input.setHint(hint);
+        input.setSingleLine(false);
+        input.setInputType(inputType);
+        input.setTextColor(textColor);
+        input.setHintTextColor(muted);
+        input.setPadding(dp(14), dp(10), dp(14), dp(10));
+        input.setBackground(round(surface, 12, border));
+        return input;
+    }
+
+    private void confirmDeleteCustomTool(String name) {
+        new AlertDialog.Builder(this)
+                .setTitle("Delete " + name + "?")
+                .setMessage("The definition is removed from this device and disappears from tools/list.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Delete", (dialog, which) -> {
+                    try {
+                        new CustomTools(this, new PythonTools(this)).execute("tool_delete",
+                                new org.json.JSONObject().put("name", name), java.util.Set.<String>of());
+                        toast("Tool deleted: " + name);
+                        page = "tools";
+                        renderPage();
+                    } catch (Exception e) {
+                        toast("Cannot delete: " + e.getMessage());
+                    }
+                }).show();
+    }
+
+    // ---------------------------------------------------------------- files page
+
+    private void renderFiles() {
+        if (fileView != null) { renderFileViewer(); return; }
+        java.io.File root = getFilesDir();
+        java.io.File current = currentDir();
+        addLabel("WORKSPACE STORAGE");
+        addText(fileDir.isEmpty() ? "Files" : fileNameOf(fileDir), 25, true, textColor);
+        addText(fileDir.isEmpty()
+                ? "App-private storage shared with the MCP tools. Import a voice-over or any asset here."
+                : "Relative path: " + fileDir, 13, false, muted);
+        space(18);
+
+        LinearLayout toolbar = card();
+        toolbar.addView(text(formatBytes(root.getUsableSpace()) + " free", 15, true));
+        toolbar.addView(text(root.getAbsolutePath(), 11, false, muted));
+        spaceIn(toolbar, 12);
+        LinearLayout actions = row();
+        Button importButton = button("⇩  Import files", true);
+        importButton.setOnClickListener(v -> importFiles());
+        Button folderButton = button("+  Folder", false);
+        folderButton.setOnClickListener(v -> showNewFolderDialog());
+        actions.addView(importButton, new LinearLayout.LayoutParams(0, dp(46), 1));
+        actions.addView(new View(this), new LinearLayout.LayoutParams(dp(8), dp(46)));
+        actions.addView(folderButton, new LinearLayout.LayoutParams(0, dp(46), 1));
+        toolbar.addView(actions);
+        addCard(toolbar);
+
+        // Breadcrumb: every segment is tappable, so deep folders are always one tap away.
+        LinearLayout crumbCard = card();
+        LinearLayout crumbs = row();
+        Button rootCrumb = button("workspace", fileDir.isEmpty());
+        rootCrumb.setTextSize(11);
+        rootCrumb.setOnClickListener(v -> { fileDir = ""; fileView = null; renderPage(); });
+        crumbs.addView(rootCrumb, new LinearLayout.LayoutParams(-2, dp(36)));
+        String accumulated = "";
+        String[] segments = fileDir.isEmpty() ? new String[0] : fileDir.split("/");
+        for (int i = 0; i < segments.length; i++) {
+            accumulated = accumulated.isEmpty() ? segments[i] : accumulated + "/" + segments[i];
+            final String target = accumulated;
+            TextView slash = text("›", 13, false, muted);
+            slash.setPadding(dp(6), 0, dp(6), 0);
+            crumbs.addView(slash);
+            Button crumb = button(segments[i], i == segments.length - 1);
+            crumb.setTextSize(11);
+            crumb.setOnClickListener(v -> { fileDir = target; fileView = null; renderPage(); });
+            crumbs.addView(crumb, new LinearLayout.LayoutParams(-2, dp(36)));
+        }
+        android.widget.HorizontalScrollView scroller = new android.widget.HorizontalScrollView(this);
+        scroller.setHorizontalScrollBarEnabled(false);
+        scroller.addView(crumbs);
+        crumbCard.addView(scroller);
+        addCard(crumbCard);
+
+        addSection("Contents", "Tap a folder to open it, a file to view it");
+        java.io.File[] entries = current.listFiles();
+        if (entries == null || entries.length == 0) {
+            LinearLayout empty = card();
+            empty.addView(text("This folder is empty", 14, true));
+            spaceIn(empty, 6);
+            empty.addView(text("Import a file, or let an MCP client write one with write_file / write_file_base64.", 12, false, muted));
+            addCard(empty);
+            return;
+        }
+        java.util.Arrays.sort(entries, (a, b) -> {
+            if (a.isDirectory() != b.isDirectory()) return a.isDirectory() ? -1 : 1;
+            return a.getName().compareToIgnoreCase(b.getName());
+        });
+
+        LinearLayout list = card();
+        boolean first = true;
+        for (java.io.File entry : entries) {
+            if (!first) divider(list);
+            first = false;
+            fileRow(list, root, entry);
+        }
+        addCard(list);
+    }
+
+    private void fileRow(LinearLayout parent, java.io.File root, java.io.File entry) {
+        LinearLayout item = row();
+        item.setPadding(0, dp(9), 0, dp(9));
+        String relative;
+        try {
+            relative = root.getCanonicalFile().toPath().relativize(entry.getCanonicalFile().toPath()).toString();
+        } catch (Exception e) {
+            relative = entry.getName();
+        }
+        final String path = relative;
+        LinearLayout labels = new LinearLayout(this);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        TextView name = text((entry.isDirectory() ? "▸ " : "▤ ") + entry.getName(), 13, true);
+        name.setSingleLine(true);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+        TextView meta = text(entry.isDirectory()
+                ? "folder" + (entry.listFiles() == null ? "" : " · " + entry.listFiles().length + " items")
+                : formatBytes(entry.length()) + " · " + mimeOf(entry), 11, false, muted);
+        labels.addView(name);
+        labels.addView(meta);
+        item.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
+
+        TextView chevron = text(entry.isDirectory() ? "›" : "👁", 15, false, muted);
+        chevron.setGravity(Gravity.CENTER);
+        item.addView(chevron, new LinearLayout.LayoutParams(dp(26), dp(38)));
+
+        Button remove = button("✕", false);
+        remove.setTextSize(12);
+        remove.setMinWidth(dp(36));
+        remove.setPadding(0, 0, 0, 0);
+        remove.setOnClickListener(v -> confirmDeleteFile(entry));
+        item.addView(remove, new LinearLayout.LayoutParams(dp(36), dp(38)));
+        item.setOnClickListener(v -> {
+            if (entry.isDirectory()) {
+                fileDir = path;
+                fileView = null;
+                renderPage();
+            } else {
+                fileView = path;
+                renderPage();
+            }
+        });
+        item.setBackground(round(surface, 12));
+        parent.addView(item);
+    }
+
+    private String parentDir(String path) {
+        int cut = path.lastIndexOf('/');
+        return cut <= 0 ? "" : path.substring(0, cut);
+    }
+
+    private String fileNameOf(String path) {
+        int cut = path.lastIndexOf('/');
+        return cut < 0 ? path : path.substring(cut + 1);
+    }
+
+    /** Resolves a workspace-relative path, refusing anything that escapes the workspace. */
+    private java.io.File workspaceFile(String relative) {
+        try {
+            java.io.File root = getFilesDir().getCanonicalFile();
+            java.io.File target = new java.io.File(root, relative).getCanonicalFile();
+            String rootPath = root.getPath();
+            if (!target.getPath().equals(rootPath) && !target.getPath().startsWith(rootPath + java.io.File.separator)) return null;
+            return target;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private java.io.File currentDir() {
+        if (fileDir.isEmpty()) return getFilesDir();
+        java.io.File dir = workspaceFile(fileDir);
+        return dir != null && dir.isDirectory() ? dir : getFilesDir();
+    }
+
+    private void renderFileViewer() {
+        java.io.File file = workspaceFile(fileView);
+        if (file == null || !file.isFile()) {
+            toast("File is gone: " + fileView);
+            fileView = null;
+            renderFiles();
+            return;
+        }
+        addLabel("FILE");
+        addText(file.getName(), 22, true, textColor);
+        addText(fileView + " · " + formatBytes(file.length()) + " · " + mimeOf(file), 11, false, muted);
+        space(14);
+
+        LinearLayout actions = card();
+        LinearLayout buttons = row();
+        Button open = button("↗  Open with", true);
+        open.setOnClickListener(v -> openWith(file));
+        Button share = button("⇪  Share", false);
+        share.setOnClickListener(v -> shareFile(file));
+        Button copy = button("⧉", false);
+        copy.setOnClickListener(v -> copyText(fileView, "Copied: " + fileView));
+        buttons.addView(open, new LinearLayout.LayoutParams(0, dp(44), 3));
+        buttons.addView(new View(this), new LinearLayout.LayoutParams(dp(8), dp(44)));
+        buttons.addView(share, new LinearLayout.LayoutParams(0, dp(44), 2));
+        buttons.addView(new View(this), new LinearLayout.LayoutParams(dp(8), dp(44)));
+        buttons.addView(copy, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        actions.addView(buttons);
+        spaceIn(actions, 10);
+        actions.addView(text("Tap a breadcrumb to go back. Delete from the folder list.", 11, false, muted));
+        addCard(actions);
+
+        addSection("Preview", file.length() > MAX_PREVIEW_BYTES ? "Large file — showing the first " + formatBytes(MAX_PREVIEW_BYTES) : "Rendered in the app, nothing leaves the device");
+        String mime = mimeOf(file);
+        if (mime.startsWith("image/")) {
+            android.graphics.Bitmap bitmap = decodeImage(file);
+            if (bitmap != null) {
+                LinearLayout holder = card();
+                android.widget.ImageView view = new android.widget.ImageView(this);
+                view.setAdjustViewBounds(true);
+                view.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+                view.setImageBitmap(bitmap);
+                holder.addView(view);
+                addCard(holder);
+                return;
+            }
+        }
+        if (isTextFile(file)) {
+            String body = readTextPreview(file);
+            LinearLayout holder = card();
+            if (body == null) {
+                holder.addView(text("Cannot read this file as text.", 13, false, muted));
+            } else {
+                TextView code = text(body, 11, false, textColor);
+                code.setTypeface(Typeface.MONOSPACE);
+                code.setTextIsSelectable(true);
+                android.widget.HorizontalScrollView horizontal = new android.widget.HorizontalScrollView(this);
+                horizontal.setHorizontalScrollBarEnabled(true);
+                horizontal.addView(code);
+                holder.addView(horizontal);
+            }
+            addCard(holder);
+            return;
+        }
+        LinearLayout binary = card();
+        binary.addView(text("Binary file", 14, true));
+        spaceIn(binary, 6);
+        binary.addView(text(mime + " · no in-app preview. Use Open with or Share to hand it to another app.", 12, false, muted));
+        spaceIn(binary, 10);
+        TextView dump = text(hexPreview(file), 10, false, muted);
+        dump.setTypeface(Typeface.MONOSPACE);
+        dump.setTextIsSelectable(true);
+        android.widget.HorizontalScrollView horizontal = new android.widget.HorizontalScrollView(this);
+        horizontal.addView(dump);
+        binary.addView(horizontal);
+        addCard(binary);
+    }
+
+    private String mimeOf(java.io.File file) {
+        String name = file.getName();
+        int dot = name.lastIndexOf('.');
+        if (dot > 0 && dot < name.length() - 1) {
+            String mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substring(dot + 1).toLowerCase(Locale.US));
+            if (mime != null) return mime;
+        }
+        return "application/octet-stream";
+    }
+
+    private boolean isTextFile(java.io.File file) {
+        String mime = mimeOf(file);
+        if (mime.startsWith("text/")) return true;
+        String name = file.getName().toLowerCase(Locale.US);
+        for (String extension : new String[]{".json", ".md", ".py", ".js", ".mjs", ".ts", ".java", ".kt", ".gradle", ".properties", ".yaml", ".yml", ".xml", ".csv", ".log", ".sh", ".txt", ".ini", ".conf", ".toml"}) {
+            if (name.endsWith(extension)) return true;
+        }
+        return mime.equals("application/json") || mime.equals("application/xml") || mime.equals("application/javascript");
+    }
+
+    private String readTextPreview(java.io.File file) {
+        long size = Math.min(file.length(), MAX_PREVIEW_BYTES);
+        if (size <= 0) return size == 0 ? "" : null;
+        byte[] buffer = new byte[(int) size];
+        try (java.io.InputStream input = new java.io.FileInputStream(file)) {
+            int read = 0;
+            while (read < buffer.length) {
+                int count = input.read(buffer, read, buffer.length - read);
+                if (count <= 0) break;
+                read += count;
+            }
+            return new String(buffer, 0, read, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private android.graphics.Bitmap decodeImage(java.io.File file) {
+        try {
+            android.graphics.BitmapFactory.Options bounds = new android.graphics.BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            android.graphics.BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+            int sample = 1;
+            while (bounds.outWidth / sample > 1400 || bounds.outHeight / sample > 1400) sample *= 2;
+            android.graphics.BitmapFactory.Options options = new android.graphics.BitmapFactory.Options();
+            options.inSampleSize = sample;
+            return android.graphics.BitmapFactory.decodeFile(file.getAbsolutePath(), options);
+        } catch (OutOfMemoryError | Exception e) {
+            return null;
+        }
+    }
+
+    private String hexPreview(java.io.File file) {
+        byte[] buffer = new byte[(int) Math.min(file.length(), HEX_PREVIEW_BYTES)];
+        try (java.io.InputStream input = new java.io.FileInputStream(file)) {
+            int read = 0;
+            while (read < buffer.length) {
+                int count = input.read(buffer, read, buffer.length - read);
+                if (count <= 0) break;
+                read += count;
+            }
+            StringBuilder out = new StringBuilder();
+            for (int offset = 0; offset < read; offset += 16) {
+                out.append(String.format(Locale.US, "%06X  ", offset));
+                StringBuilder ascii = new StringBuilder();
+                for (int i = 0; i < 16; i++) {
+                    if (offset + i < read) {
+                        int value = buffer[offset + i] & 0xFF;
+                        out.append(String.format(Locale.US, "%02X ", value));
+                        ascii.append(value >= 32 && value < 127 ? (char) value : '.');
+                    } else {
+                        out.append("   ");
+                    }
+                }
+                out.append(" ").append(ascii).append('\n');
+            }
+            return out.toString();
+        } catch (Exception e) {
+            return "Cannot read this file.";
+        }
+    }
+
+    private android.net.Uri fileUri(java.io.File file) {
+        java.io.File root = getFilesDir();
+        String relative;
+        try {
+            relative = root.getCanonicalFile().toPath().relativize(file.getCanonicalFile().toPath()).toString();
+        } catch (Exception e) {
+            relative = file.getName();
+        }
+        return android.net.Uri.parse("content://" + WorkspaceProvider.AUTHORITY + "/" + android.net.Uri.encode(relative, "/"));
+    }
+
+    private void openWith(java.io.File file) {
+        Intent intent = new Intent(Intent.ACTION_VIEW);
+        intent.setDataAndType(fileUri(file), mimeOf(file));
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            startActivity(intent);
+        } catch (Exception e) {
+            toast("No app can open " + mimeOf(file));
+        }
+    }
+
+    private void shareFile(java.io.File file) {
+        Intent intent = new Intent(Intent.ACTION_SEND);
+        intent.setType(mimeOf(file));
+        intent.putExtra(Intent.EXTRA_STREAM, fileUri(file));
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            startActivity(Intent.createChooser(intent, "Share " + file.getName()));
+        } catch (Exception e) {
+            toast("Cannot share: " + e.getMessage());
+        }
+    }
+
+    private void importFiles() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        try {
+            startActivityForResult(intent, REQUEST_IMPORT_FILES);
+        } catch (Exception e) {
+            toast("No file picker available: " + e.getMessage());
+        }
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_IMPORT_FILES || resultCode != RESULT_OK || data == null) return;
+        java.util.List<android.net.Uri> uris = new java.util.ArrayList<>();
+        if (data.getClipData() != null) {
+            for (int i = 0; i < data.getClipData().getItemCount(); i++) uris.add(data.getClipData().getItemAt(i).getUri());
+        } else if (data.getData() != null) {
+            uris.add(data.getData());
+        }
+        if (uris.isEmpty()) return;
+        toast("Importing " + uris.size() + " file(s)...");
+        final java.io.File targetDir = currentDir();
+        new Thread(() -> {
+            int imported = 0;
+            String failure = null;
+            for (android.net.Uri uri : uris) {
+                try {
+                    copyIntoWorkspace(uri, targetDir);
+                    imported++;
+                } catch (Exception e) {
+                    failure = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+                }
+            }
+            final int count = imported;
+            final String error = failure;
+            runOnUiThread(() -> {
+                toast(error == null ? "Imported " + count + " file(s)" : "Imported " + count + ", failed: " + error);
+                page = "files";
+                renderPage();
+            });
+        }, "workspace-import").start();
+    }
+
+    private void copyIntoWorkspace(android.net.Uri uri, java.io.File directory) throws java.io.IOException {
+        String name = displayName(uri);
+        String safe = name.replaceAll("[\\\\/:*?\"<>|]", "-");
+        java.io.File target = new java.io.File(directory, uniqueName(safe, directory));
+        long total = 0;
+        try (java.io.InputStream input = getContentResolver().openInputStream(uri);
+             java.io.OutputStream output = new java.io.FileOutputStream(target)) {
+            if (input == null) throw new java.io.IOException("Cannot open " + name);
+            byte[] buffer = new byte[64 * 1024];
+            int count;
+            while ((count = input.read(buffer)) != -1) {
+                total += count;
+                if (total > MAX_IMPORT_BYTES) throw new java.io.IOException(name + " is larger than " + formatBytes(MAX_IMPORT_BYTES));
+                output.write(buffer, 0, count);
+            }
+            output.flush();
+        }
+    }
+
+    private String displayName(android.net.Uri uri) {
+        try (android.database.Cursor cursor = getContentResolver().query(uri,
+                new String[]{android.provider.OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                String value = cursor.getString(0);
+                if (value != null && !value.trim().isEmpty()) return value;
+            }
+        } catch (Exception ignored) {
+            // Fall through to the URI's last segment.
+        }
+        String fallback = uri.getLastPathSegment();
+        return fallback == null ? "import" : fallback.substring(fallback.lastIndexOf('/') + 1);
+    }
+
+    private String uniqueName(String name, java.io.File directory) {
+        java.io.File candidate = new java.io.File(directory, name);
+        if (!candidate.exists()) return name;
+        int dot = name.lastIndexOf('.');
+        String base = dot > 0 ? name.substring(0, dot) : name;
+        String extension = dot > 0 ? name.substring(dot) : "";
+        for (int i = 1; i < 1000; i++) {
+            String next = base + "-" + i + extension;
+            if (!new java.io.File(directory, next).exists()) return next;
+        }
+        return base + "-" + System.currentTimeMillis() + extension;
+    }
+
+    private void showNewFolderDialog() {
+        EditText input = toolInput("Folder name", InputType.TYPE_CLASS_TEXT);
+        input.setSingleLine(true);
+        new AlertDialog.Builder(this)
+                .setTitle("New folder")
+                .setView(input)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Create", (dialog, which) -> {
+                    String name = input.getText().toString().trim().replaceAll("[\\\\/:*?\"<>|]", "-");
+                    if (name.isEmpty()) { toast("Enter a folder name"); return; }
+                    java.io.File folder = new java.io.File(currentDir(), name);
+                    if (folder.mkdirs()) {
+                        toast("Folder created: " + name);
+                        fileDir = fileDir.isEmpty() ? name : fileDir + "/" + name;
+                        fileView = null;
+                        renderPage();
+                    } else toast("Cannot create folder");
+                }).show();
+    }
+
+    private void confirmDeleteFile(java.io.File entry) {
+        new AlertDialog.Builder(this)
+                .setTitle("Delete " + entry.getName() + "?")
+                .setMessage(entry.isDirectory() ? "The folder and everything inside it will be removed." : "The file will be removed from app storage.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Delete", (dialog, which) -> {
+                    if (deleteRecursively(entry)) { toast("Deleted: " + entry.getName()); renderPage(); }
+                    else toast("Cannot delete: " + entry.getName());
+                }).show();
+    }
+
+    private boolean deleteRecursively(java.io.File target) {
+        if (target.isDirectory()) {
+            java.io.File[] children = target.listFiles();
+            if (children != null) for (java.io.File child : children) deleteRecursively(child);
+        }
+        return target.delete();
+    }
+
+    private String formatBytes(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024L * 1024) return String.format(Locale.US, "%.1f KB", bytes / 1024.0);
+        if (bytes < 1024L * 1024 * 1024) return String.format(Locale.US, "%.1f MB", bytes / (1024.0 * 1024));
+        return String.format(Locale.US, "%.2f GB", bytes / (1024.0 * 1024 * 1024));
     }
 
     private void savePort() {

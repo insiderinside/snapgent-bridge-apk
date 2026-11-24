@@ -5,6 +5,7 @@ import json
 import os
 import socket
 import struct
+import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
 import sys
@@ -17,8 +18,19 @@ REMOTE_PORT = 8765
 
 
 def get_token():
-    xml = adb('shell', 'run-as', 'dev.snapgent.bridge', 'cat',
-              'shared_prefs/snapgent_bridge.xml')
+    # SNAPGENT_TOKEN wins: a release APK is not debuggable, so `run-as` is
+    # unavailable there and the token can only be supplied from outside.
+    supplied = os.environ.get('SNAPGENT_TOKEN', '').strip()
+    if supplied:
+        return supplied
+    try:
+        xml = adb('shell', 'run-as', 'dev.snapgent.bridge', 'cat',
+                  'shared_prefs/snapgent_bridge.xml')
+    except subprocess.CalledProcessError:
+        raise SystemExit(
+            'Cannot read the token: this APK is a release build (run-as is debug-only).\n'
+            'Copy the MCP connection URL in the app and export SNAPGENT_TOKEN=<token> '
+            'for this run.')
     root = ET.fromstring(xml)
     node = root.find("string[@name='auth_token']")
     if node is None or not node.text:
@@ -146,7 +158,7 @@ def main():
         catalog = ws.call(2, 'tools/list')
         tools = catalog['result']['tools']
         names = [tool['name'] for tool in tools]
-        assert len(names) == 29, names
+        assert len(names) == 53, names
         assert 'device_info' in names and 'run_command' in names and 'git_status' in names
         print(f'tools/list: {len(names)} tools OK')
 

@@ -1,6 +1,10 @@
 import java.util.Properties
 
-plugins { id 'com.android.application' }
+plugins {
+    id 'com.android.application'
+    // Embedded CPython runtime (prebuilt, no NDK needed). Ships as libpython3.x.so.
+    id 'com.chaquo.python' version '16.1.0'
+}
 
 // Release signing material lives OUTSIDE the repository.
 // Override the location with SNAPGENT_KEYSTORE_PROPERTIES when building elsewhere.
@@ -21,8 +25,11 @@ android {
         applicationId 'dev.snapgent.bridge'
         minSdk 26
         targetSdk 34
-        versionCode 3
-        versionName '0.1.2'
+        versionCode 7
+        versionName '0.1.5'
+        // The embedded Python runtime ships one native lib per ABI. Phones are arm64;
+        // x86_64 is only needed for emulators, so keep the APK small.
+        ndk { abiFilters 'arm64-v8a' }
     }
     signingConfigs {
         release {
@@ -48,6 +55,20 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+// Bundled Python packages. Chaquopy runs pip at BUILD time and packs the wheels
+// into the APK, so the device never needs a package manager or writable exec
+// storage (targetSdk 34 blocks running downloaded binaries anyway).
+// Only pure-Python or Chaquopy-published arm64 wheels work here; adding a package
+// without an arm64 wheel fails the build, it does not fail at runtime.
+chaquopy {
+    defaultConfig {
+        pip {
+            install "requests"
+            install "Pillow"
+        }
     }
 }
 

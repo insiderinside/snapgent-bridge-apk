@@ -3,6 +3,7 @@ package dev.snapgent.bridge;
 import android.content.Context;
 import android.os.Build;
 import android.os.Environment;
+import android.util.Base64;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -18,16 +19,23 @@ import java.util.Comparator;
 public final class McpHandler {
     private static final int MAX_FILE_BYTES = 512 * 1024;
     private static final String PROTOCOL_VERSION = "2025-06-18";
+    private static final int MAX_BINARY_BYTES = 4 * 1024 * 1024;
     private final Context context;
     private final WorkspaceTools workspace;
     private final GitTools git;
+    private final PythonTools pythonTools;
+    private final RenderTools renderTools;
+    private final CustomTools customTools;
     private final String appVersion;
 
     public McpHandler(Context context) {
         this.context = context.getApplicationContext();
         this.workspace = new WorkspaceTools(this.context);
+        this.pythonTools = new PythonTools(this.context);
+        this.renderTools = new RenderTools(this.context);
+        this.customTools = new CustomTools(this.context, this.pythonTools);
         this.appVersion = BridgeConfig.appVersion(this.context);
-        try { this.git = new GitTools(this.context.getFilesDir()); }
+        try { this.git = new GitTools(this.context); }
         catch (IOException e) { throw new IllegalStateException("Cannot initialize Git tools", e); }
     }
 
@@ -77,7 +85,8 @@ public final class McpHandler {
                 .put("serverInfo", new JSONObject().put("name", "snapgent-android-bridge").put("version", appVersion));
     }
 
-    private JSONObject listTools() throws JSONException {
+    /** Catalog of the built-in tools, before the user's on/off switches are applied. */
+    private JSONArray builtinCatalog() throws JSONException {
         JSONArray tools = new JSONArray();
         tools.put(tool("device_info", "Get Android device information and bridge status", new JSONObject()));
         tools.put(tool("list_files", "List files in the Snapgent Bridge app-private storage", new JSONObject()
@@ -87,11 +96,74 @@ public final class McpHandler {
         tools.put(tool("write_file", "Create or replace a UTF-8 file in Snapgent Bridge app-private storage (max 512 KiB)", new JSONObject()
                 .put("path", stringProperty("Relative file path"))
                 .put("content", stringProperty("UTF-8 text content")), "path", "content"));
+        tools.put(tool("write_file_base64", "Upload binary data (audio, images, video) into app-private storage."
+                + " Base64-encoded, at most 4 MiB per call; pass append=true to continue a larger file.", new JSONObject()
+                .put("path", stringProperty("Relative file path"))
+                .put("data", stringProperty("Base64-encoded bytes"))
+                .put("append", boolProperty("Append instead of replacing the file")), "path", "data"));
+        tools.put(tool("read_file_base64", "Read a binary file (max 4 MiB) as base64, to pull renders or voice-overs off the device", new JSONObject()
+                .put("path", stringProperty("Relative file path")), "path"));
         JSONArray workspaceTools = workspace.catalog();
         for (int i = 0; i < workspaceTools.length(); i++) tools.put(workspaceTools.getJSONObject(i));
         JSONArray gitTools = git.catalog();
         for (int i = 0; i < gitTools.length(); i++) tools.put(gitTools.getJSONObject(i));
+        JSONArray pythonToolCatalog = pythonTools.catalog();
+        for (int i = 0; i < pythonToolCatalog.length(); i++) tools.put(pythonToolCatalog.getJSONObject(i));
+        JSONArray renderToolCatalog = renderTools.catalog();
+        for (int i = 0; i < renderToolCatalog.length(); i++) tools.put(renderToolCatalog.getJSONObject(i));
+        return tools;
+    }
+
+    private JSONObject listTools() throws JSONException {
+        JSONArray tools = new JSONArray();
+        JSONArray builtin = builtinCatalog();
+        for (int i = 0; i < builtin.length(); i++) {
+            JSONObject entry = builtin.getJSONObject(i);
+            if (ToolSettings.isEnabled(context, entry.optString("name"))) tools.put(entry);
+        }
+        JSONArray custom = customTools.catalog();
+        for (int i = 0; i < custom.length(); i++) {
+            JSONObject entry = custom.getJSONObject(i);
+            if (ToolSettings.isEnabled(context, entry.optString("name"))) tools.put(entry);
+        }
+        JSONArray management = customTools.managementCatalog();
+        for (int i = 0; i < management.length(); i++) tools.put(management.getJSONObject(i));
         return new JSONObject().put("tools", tools);
+    }
+
+    /**
+     * Every tool with its switch state, for the Settings screen. A tool the user
+     * switched off stays listed here even though {@code tools/list} hides it.
+     */
+    public JSONArray toolSummaries() throws JSONException {
+        JSONArray result = new JSONArray();
+        JSONArray builtin = builtinCatalog();
+        for (int i = 0; i < builtin.length(); i++) {
+            JSONObject entry = builtin.getJSONObject(i);
+            String name = entry.optString("name");
+            result.put(new JSONObject().put("name", name).put("kind", "builtin")
+                    .put("description", entry.optString("description"))
+                    .put("enabled", ToolSettings.isEnabled(context, name)));
+        }
+        JSONArray custom = customTools.catalog();
+        for (int i = 0; i < custom.length(); i++) {
+            JSONObject entry = custom.getJSONObject(i);
+            String name = entry.optString("name");
+            result.put(new JSONObject().put("name", name).put("kind", "custom")
+                    .put("description", entry.optString("description"))
+                    .put("enabled", ToolSettings.isEnabled(context, name)));
+        }
+        // Management tools cannot be switched off: they are how a client creates and
+        // toggles everything else, so they are always listed as enabled.
+        result.put(new JSONObject().put("name", "tool_create").put("kind", "management")
+                .put("description", "Create or replace a custom tool").put("enabled", true));
+        result.put(new JSONObject().put("name", "tool_delete").put("kind", "management")
+                .put("description", "Delete a custom tool").put("enabled", true));
+        result.put(new JSONObject().put("name", "tool_list").put("kind", "management")
+                .put("description", "List every tool and its switch state").put("enabled", true));
+        result.put(new JSONObject().put("name", "tool_set_enabled").put("kind", "management")
+                .put("description", "Enable or disable a tool").put("enabled", true));
+        return result;
     }
 
     private JSONObject tool(String name, String description, JSONObject properties, String... required) throws JSONException {
@@ -105,11 +177,19 @@ public final class McpHandler {
         return new JSONObject().put("type", "string").put("description", description);
     }
 
+    private JSONObject boolProperty(String description) throws JSONException {
+        return new JSONObject().put("type", "boolean").put("description", description);
+    }
+
     private JSONObject callTool(JSONObject params) throws JSONException {
         if (params == null || !(params.opt("name") instanceof String)) throw new IllegalArgumentException("Missing tool name");
         String name = params.optString("name");
         JSONObject args = params.optJSONObject("arguments");
         if (args == null) args = new JSONObject();
+        if (!ToolSettings.isEnabled(context, name)) {
+            return toolResult("Tool is switched off on the device: " + name
+                    + ". Enable it in the Snapgent Bridge settings or with tool_set_enabled.", true);
+        }
         try {
             switch (name) {
                 case "device_info": return toolResult(deviceInfo().toString(2), false);
@@ -118,10 +198,51 @@ public final class McpHandler {
                 case "write_file": {
                     String path = requireString(args, "path", false);
                     String content = requireString(args, "content", true);
-                    writeFile(path, content);
+                    writeBytes(path, content.getBytes(StandardCharsets.UTF_8), false);
                     return toolResult("Saved: " + path, false);
                 }
-                default: return toolResult(GitTools.isTool(name) ? git.execute(name, args) : workspace.execute(name, args), false);
+                case "write_file_base64": {
+                    String path = requireString(args, "path", false);
+                    byte[] decoded;
+                    try {
+                        decoded = Base64.decode(requireString(args, "data", false), Base64.DEFAULT);
+                    } catch (IllegalArgumentException e) {
+                        throw new IOException("data is not valid base64");
+                    }
+                    if (decoded.length > MAX_BINARY_BYTES) throw new IOException("Payload exceeds 4 MiB; split it with append=true");
+                    writeBytes(path, decoded, args.optBoolean("append", false));
+                    return toolResult(new JSONObject().put("saved", path)
+                            .put("bytes", decoded.length)
+                            .put("totalBytes", resolve(path).length())
+                            .put("append", args.optBoolean("append", false)).toString(), false);
+                }
+                case "read_file_base64": {
+                    String path = requireString(args, "path", false);
+                    File file = resolve(path);
+                    if (!file.isFile()) throw new IOException("File not found: " + path);
+                    if (file.length() > MAX_BINARY_BYTES) throw new IOException("File exceeds 4 MiB: " + file.length() + " bytes");
+                    byte[] bytes = new byte[(int) file.length()];
+                    try (FileInputStream input = new FileInputStream(file)) {
+                        int offset = 0;
+                        while (offset < bytes.length) {
+                            int count = input.read(bytes, offset, bytes.length - offset);
+                            if (count < 0) break;
+                            offset += count;
+                        }
+                    }
+                    return toolResult(new JSONObject()
+                            .put("path", path)
+                            .put("bytes", bytes.length)
+                            .put("data", Base64.encodeToString(bytes, Base64.NO_WRAP)).toString(), false);
+                }
+                default:
+                    if (CustomTools.isManagementTool(name)) {
+                        return toolResult(customTools.execute(name, args, CustomTools.nameSet(builtinCatalog())), false);
+                    }
+                    if (customTools.isCustom(name)) return toolResult(customTools.execute(name, args, CustomTools.nameSet(builtinCatalog())), false);
+                    if (PythonTools.isTool(name)) return toolResult(pythonTools.execute(name, args), false);
+                    if (RenderTools.isTool(name)) return toolResult(renderTools.execute(name, args), false);
+                    return toolResult(GitTools.isTool(name) ? git.execute(name, args) : workspace.execute(name, args), false);
             }
         } catch (IOException | SecurityException e) {
             return toolResult("Tool error: " + e.getMessage(), true);
@@ -200,14 +321,16 @@ public final class McpHandler {
         }
     }
 
-    private void writeFile(String relativePath, String content) throws IOException {
-        byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
-        if (bytes.length > MAX_FILE_BYTES) throw new IOException("Content exceeds 512 KiB");
+    private void writeBytes(String relativePath, byte[] bytes, boolean append) throws IOException {
+        if (bytes.length > MAX_FILE_BYTES && !append) {
+            // Text writes stay capped at 512 KiB; binary uploads are checked by the caller.
+            if (bytes.length > MAX_BINARY_BYTES) throw new IOException("Content exceeds 4 MiB");
+        }
         File file = resolve(relativePath);
         if (file.equals(context.getFilesDir().getCanonicalFile()) || file.isDirectory()) throw new IOException("Destination is a directory");
         File parent = file.getParentFile();
         if (!parent.isDirectory() && !parent.mkdirs()) throw new IOException("Cannot create parent directory");
-        try (FileOutputStream output = new FileOutputStream(file, false)) {
+        try (FileOutputStream output = new FileOutputStream(file, append)) {
             output.write(bytes);
             output.getFD().sync();
         }

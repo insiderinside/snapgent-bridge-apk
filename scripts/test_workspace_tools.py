@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end checks for Android workspace MCP tools over ADB WebSocket."""
 import json
+import subprocess
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -15,8 +16,8 @@ def main():
     try:
         greeting = ws.receive()
         assert greeting['type'] == 'connected'
-        assert greeting['servers'][0]['tools'] == 29, greeting['servers']
-        print('Catalog: 29 Android tools OK')
+        assert greeting['servers'][0]['tools'] == 53, greeting['servers']
+        print('Catalog: 53 Android tools OK')
 
         def call(name, args=None, expect_ok=True):
             nonlocal counter
@@ -65,7 +66,12 @@ def main():
             print('Path traversal and directory deletion blocked OK')
         finally:
             # Delete only the test directory created by this test, not user files.
-            adb('shell', 'run-as', 'dev.snapgent.bridge', 'rmdir', 'files/' + prefix)
+            # `run-as` only works on a debuggable build; the release APK is not, so
+            # this cleanup is best-effort and must not fail an otherwise green run.
+            try:
+                adb('shell', 'run-as', 'dev.snapgent.bridge', 'rmdir', 'files/' + prefix)
+            except subprocess.CalledProcessError:
+                print('note: left files/' + prefix + ' behind (release build, run-as unavailable)')
         print('RESULT: PASS (all tested tools)')
     finally:
         ws.close()

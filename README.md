@@ -48,13 +48,27 @@ Both listeners bind to loopback only and require the same bearer token (a 32-byt
 
 The MCP port is configurable in the app (1024–65535, excluding the native port). The bridge runs as a `dataSync` foreground service with a low-importance notification.
 
-## Tools (29)
+## Tools (53)
 
-**Device and files (4):** `device_info`, `list_files`, `read_file`, `write_file` — app-private storage only, 512 KiB per file.
+**Device and files (6):** `device_info`, `list_files`, `read_file`, `write_file`, `write_file_base64`, `read_file_base64` — app-private storage only. Text stays capped at 512 KiB; the base64 pair moves binary assets (voice-overs, renders) in 4 MiB chunks with `append=true` for larger files.
 
 **Workspace, VS Code style (18):** `get_workspace_info`, `get_project_info`, `list_dir`, `list_tree`, `find_files`, `search_files`, `read_files`, `read_file_lines`, `get_file_info`, `get_file_outline`, `create_file`, `edit_file`, `create_directory`, `move_file`, `copy_file`, `delete_file`, `apply_patch`, `run_command` (allowlisted utilities only, no shell, 30 s ceiling).
 
-**Git connector (7):** `git_init`, `git_status`, `git_diff`, `git_log`, `git_branches`, `git_add`, `git_commit` — backed by JGit 6.10 and confined to the app-private workspace, so the extension can review and commit changes on the phone itself.
+**Git connector (19):** `git_init`, `git_status`, `git_diff`, `git_log`, `git_branches`, `git_add`, `git_commit`, `git_clone`, `git_remotes`, `git_remote_add`, `git_remote_remove`, `git_fetch`, `git_pull`, `git_push`, `git_checkout`, `git_branch_create`, `git_stash`, `git_stash_list`, `git_stash_apply` — backed by JGit 6.10 and confined to the app-private workspace, so the extension can review and commit changes on the phone itself.
+
+**Embedded Python (2):** `run_python` (execute a snippet or a script file in the bundled CPython 3.8 runtime) and `python_info` (version, platform, bundled packages) — Chaquopy, prebuilt, so no NDK and no system Python are required on the phone. It ships the standard library plus `requests` 2.32.4 and `Pillow` 9.2.0 (with the `_imaging`/freetype/libjpeg native parts), packed at build time; there is no runtime `pip install`.
+
+**Render (4):** `render_still` (one HTML/Canvas/Three.js frame from an off-screen WebView, saved as PNG), `render_video` (H.264 MP4 through `MediaCodec`/`MediaMuxer`, calling `window.__snapgentSeek(ms)` per frame when the page defines it), `encode_frames` (PNG sequence to MP4) and `render_info` (WebView version plus the available H.264/AAC encoders). An optional 16-bit PCM WAV soundtrack is muxed as AAC, so no Playwright, FFmpeg or Termux is needed on the phone.
+
+**Tool registry (4):** `tool_create`, `tool_delete`, `tool_list`, `tool_set_enabled` — the client can define its own MCP tools on the phone. A `python` definition runs inside the embedded interpreter with its arguments pre-parsed into the dict `ARGS`; an `http` definition sends a request with `{{arg}}` substitution in the URL, headers and body. Both appear in `tools/list` immediately, so a Mac-side agent can extend the bridge without rebuilding the APK.
+
+## App screens
+
+- **Home** — transport switch (native 17613 / MCP 8765), start/stop, live status, and quick actions into the other pages.
+- **Tools** — every built-in tool as a card with its own on/off switch (53 of 53 by default), plus the custom-tool list. A custom tool is defined on the phone: `python` (source or script path, run by the embedded interpreter) or `http` (method, URL, headers, body with `{{arg}}` substitution). The four `tool_*` management tools are always on, so the registry can never lock itself out.
+- **Files** — browses the app-private workspace with its path and free space, imports a file from device storage through the system file picker (SAF), creates folders, and deletes entries — the way a voice-over or a render reaches `write_file_base64`. Folders open in place (breadcrumb at the top, back arrow steps out one level), and tapping a file opens an in-app preview: text/code/log files render selectable, images are decoded downsampled to fit, and anything else shows its MIME type plus a hex dump of the first KiB. *Open with* and *Share* hand the file to another app through the read-only `dev.snapgent.bridge.files` provider (no `androidx` dependency, not exported, every URI granted per Intent).
+- **Settings** — native/MCP ports, bearer token (show, copy, regenerate), appearance, auto-start, and the **GitHub** card: paste a Personal Access Token, tap *Validate and save*, and the username comes back from the API. The token is encrypted with the Android Keystore (AES-GCM) and never written in plaintext; saving an empty field keeps the existing token.
+- **Activity Logs** — bridge events filterable by ALL/INFO/WARN/ERROR, with a clear action.
 
 ## Security model
 
@@ -62,16 +76,17 @@ The MCP port is configurable in the app (1024–65535, excluding the native port
 - No root required, and the bridge never reads outside its own app-private directory: `..`/absolute paths and symlink escapes are rejected.
 - File reads/writes are capped at 512 KiB; `delete_file` refuses directories; patch application is all-or-nothing.
 - `run_command` runs a fixed allowlist of utilities (`pwd`, `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `stat`, `sha256sum`, `date`, `uname`, `df`) with per-utility argument checks, at most 32 arguments, and no shell.
+- `run_python` executes code with the app's own UID inside the same app-private boundary: `cwd` cannot escape it, output is capped at 256 KiB, the soft timeout is 15 s, and dependencies are resolved at build time (no runtime `pip`). Only packages that ship an arm64 wheel can be added; an unavailable one fails the build instead of the tool call.
 
 ## Compatibility
 
-The extension wire protocol was taken from the SnapgentV3 extension: the native endpoint greets a client with a `connected` frame (reporting `bridge_version: android-0.1.2` plus the full tool catalog), answers `ping`/`pong`, serves `list_tools`, executes `call_tool`, and accepts `restart_mcp`. `stream` and `progress` frames are accepted as fire-and-forget telemetry.
+The extension wire protocol was taken from the SnapgentV3 extension: the native endpoint greets a client with a `connected` frame (reporting `bridge_version: android-0.1.4` plus the full tool catalog), answers `ping`/`pong`, serves `list_tools`, executes `call_tool`, and accepts `restart_mcp`. `stream` and `progress` frames are accepted as fire-and-forget telemetry.
 
 Telemetry-only caveat: the bridge exposes no desktop `studio` runtime, so `studio_status` intentionally returns nulls.
 
 ## Build
 
-Requires JDK 17, Android SDK Platform 35 with Build Tools, and Gradle 8.7 (Android Gradle Plugin 8.6.1).
+Requires JDK 17, Android SDK Platform 35 with Build Tools, and Gradle 8.7 (Android Gradle Plugin 8.6.1), plus a host `python3` for Chaquopy's build-time pip (3.9.6 was used here; no virtualenv and no NDK needed).
 
 ```bash
 ./gradlew assembleDebug     # app/build/outputs/apk/debug/app-debug.apk
@@ -80,15 +95,25 @@ Requires JDK 17, Android SDK Platform 35 with Build Tools, and Gradle 8.7 (Andro
 
 `assembleRelease` signs with the release keystore described above when `keystore.properties` is present. The file uses four keys: `storeFile`, `storePassword`, `keyAlias`, `keyPassword`. To build with your own key, point `SNAPGENT_KEYSTORE_PROPERTIES` at your properties file. Verify any built APK with `apksigner verify --print-certs app/build/outputs/apk/release/app-release.apk`.
 
+The build is `arm64-v8a` only (`abiFilters`), because Chaquopy ships one CPython per ABI and that single slice is what makes the APK 17 MB instead of far more. The first build downloads Chaquopy's CPython and the `requests`/`Pillow` wheels; later builds are cached under `app/build`. Adding a package without an arm64 wheel fails the build, not the device.
+
 ## Tests
 
 End-to-end tests drive the real device over ADB (`adb -s <serial> forward tcp:1876x tcp:876x`):
 
 ```bash
-python3 scripts/test_mcp_ws.py         # MCP JSON-RPC over the 8765 endpoint
-python3 scripts/test_snapgent_ws.py    # SnapgentV3 native protocol on 17613
-python3 scripts/test_workspace_tools.py # workspace + tool catalog (expects 29 tools)
+python3 scripts/test_mcp_ws.py          # MCP JSON-RPC over the 8765 endpoint
+python3 scripts/test_mcp_device.py      # same MCP coverage, run on-device (release APK)
+python3 scripts/test_snapgent_ws.py     # SnapgentV3 native protocol on 17613
+python3 scripts/test_workspace_tools.py # workspace + tool catalog (expects 53 tools)
+python3 scripts/test_tool_registry.py   # custom python/http tools, switches, catalog count
+python3 scripts/test_python_packages.py # run_python: stdlib, requests, Pillow, output cap
+python3 scripts/test_render_tools.py    # render_still / encode_frames / render_info
 ```
+
+Every script drives the running bridge over ADB and fails with a non-zero exit code, so they work as a release gate.
+
+`test_mcp_ws.py` reads the bearer token from `shared_prefs` with `run-as`, which only works on a debug APK; on a release build it asks for `SNAPGENT_TOKEN` instead. `test_mcp_device.py` covers the same ground without that limitation: it writes a small client into the app-private workspace and runs it with `run_python`, so the token stays on the phone and only counts are printed.
 
 ## Roadmap
 
