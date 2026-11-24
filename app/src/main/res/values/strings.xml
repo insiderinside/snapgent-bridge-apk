@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_label">Snapgent Bridge device control</string>
+    <string name="accessibility_service_description">Lets a connected agent tap, swipe, type, read the current screen and take screenshots on this device. It only acts when a tool call asks for it.</string>
+</resources>

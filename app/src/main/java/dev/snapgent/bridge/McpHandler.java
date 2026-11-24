@@ -25,6 +25,7 @@ public final class McpHandler {
     private final GitTools git;
     private final PythonTools pythonTools;
     private final RenderTools renderTools;
+    private final DeviceTools deviceTools;
     private final CustomTools customTools;
     private final String appVersion;
 
@@ -33,6 +34,7 @@ public final class McpHandler {
         this.workspace = new WorkspaceTools(this.context);
         this.pythonTools = new PythonTools(this.context);
         this.renderTools = new RenderTools(this.context);
+        this.deviceTools = new DeviceTools(this.context);
         this.customTools = new CustomTools(this.context, this.pythonTools);
         this.appVersion = BridgeConfig.appVersion(this.context);
         try { this.git = new GitTools(this.context); }
@@ -111,6 +113,8 @@ public final class McpHandler {
         for (int i = 0; i < pythonToolCatalog.length(); i++) tools.put(pythonToolCatalog.getJSONObject(i));
         JSONArray renderToolCatalog = renderTools.catalog();
         for (int i = 0; i < renderToolCatalog.length(); i++) tools.put(renderToolCatalog.getJSONObject(i));
+        JSONArray deviceToolCatalog = deviceTools.catalog();
+        for (int i = 0; i < deviceToolCatalog.length(); i++) tools.put(deviceToolCatalog.getJSONObject(i));
         return tools;
     }
 
@@ -242,6 +246,7 @@ public final class McpHandler {
                     if (customTools.isCustom(name)) return toolResult(customTools.execute(name, args, CustomTools.nameSet(builtinCatalog())), false);
                     if (PythonTools.isTool(name)) return toolResult(pythonTools.execute(name, args), false);
                     if (RenderTools.isTool(name)) return toolResult(renderTools.execute(name, args), false);
+                    if (DeviceTools.isTool(name)) return toolResult(deviceTools.execute(name, args), false);
                     return toolResult(GitTools.isTool(name) ? git.execute(name, args) : workspace.execute(name, args), false);
             }
         } catch (IOException | SecurityException e) {

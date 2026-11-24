@@ -71,8 +71,8 @@ def main():
     try:
         greeting = ws.receive()
         assert greeting['type'] == 'connected', greeting
-        assert greeting['servers'][0]['tools'] == 53, greeting['servers']
-        print('Catalog: 53 Android tools OK')
+        assert greeting['servers'][0]['tools'] == 65, greeting['servers']
+        print('Catalog: 65 Android tools OK')
 
         info = json.loads(call('python_info'))
         assert info['ok'], info

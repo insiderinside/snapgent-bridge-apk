@@ -2,15 +2,15 @@
 
 Android-native (Java 17) on-device bridge. It runs a loopback-only WebSocket server inside the phone and speaks both the MCP JSON-RPC protocol and the SnapgentV3 extension's native WebSocket protocol, so the Snapgent extension running in an Android browser can read files, edit a workspace, and drive Git on the device — without the desktop Python bridge.
 
-Current build: **0.1.2** (`dev.snapgent.bridge`, minSdk 26, targetSdk 34, versionCode 3).
+Current build: **0.1.6** (`dev.snapgent.bridge`, minSdk 26, targetSdk 34, versionCode 8).
 
 ## Download the release APK
 
-- Latest release: [Releases v0.1.2](https://github.com/insiderinside/snapgent-bridge-apk/releases/tag/v0.1.2) — asset `snapgent-bridge-0.1.2.apk`.
-- Install over ADB: `adb install -r snapgent-bridge-0.1.2.apk`, or open the asset link on the phone.
-- Upgrading from the debug-signed `v0.1.0` needs `adb uninstall dev.snapgent.bridge` first; `v0.1.1` → `v0.1.2` upgrades in place because both use the release key.
+- Latest release: [Releases v0.1.6](https://github.com/insiderinside/snapgent-bridge-apk/releases/tag/v0.1.6) — asset `app-release.apk`.
+- Install over ADB: `adb install -r app-release.apk`, or open the asset link on the phone.
+- Upgrading from the debug-signed `v0.1.0` needs `adb uninstall dev.snapgent.bridge` first; every release since `v0.1.1` upgrades in place because they all use the release key.
 
-`v0.1.2` is signed with a dedicated **4096-bit RSA release keystore** (APK Signature Scheme v2):
+`v0.1.1` onwards are signed with a dedicated **4096-bit RSA release keystore** (APK Signature Scheme v2):
 
 ```text
 Signer DN:      CN=Snapgent Bridge, OU=Release, O=insiderinside, L=Jakarta, ST=Jakarta, C=ID
@@ -48,9 +48,11 @@ Both listeners bind to loopback only and require the same bearer token (a 32-byt
 
 The MCP port is configurable in the app (1024–65535, excluding the native port). The bridge runs as a `dataSync` foreground service with a low-importance notification.
 
-## Tools (53)
+## Tools (65)
 
 **Device and files (6):** `device_info`, `list_files`, `read_file`, `write_file`, `write_file_base64`, `read_file_base64` — app-private storage only. Text stays capped at 512 KiB; the base64 pair moves binary assets (voice-overs, renders) in 4 MiB chunks with `append=true` for larger files.
+
+**Device control, adb style (12):** `device_status`, `screen_dump`, `screen_screenshot`, `screen_tap`, `screen_tap_text`, `screen_swipe`, `screen_long_press`, `screen_key`, `screen_text`, `screen_wait`, `app_list`, `app_launch` — the parts of `adb shell input`, `uiautomator dump`, `screencap` and `am start` an agent normally needs, without USB and without root. They run through an accessibility service (the `DeviceAutomationService` in `Settings > Accessibility`): `screen_dump` returns every visible node with its text, view id and tap coordinates, `screen_tap_text` clicks by label with a coordinate fallback, `screen_screenshot` saves a PNG into the workspace (`screenshots/`, Android 11+), and `screen_wait` blocks until an element appears. With the service off, these tools answer with the exact steps to enable it instead of failing silently.
 
 **Workspace, VS Code style (18):** `get_workspace_info`, `get_project_info`, `list_dir`, `list_tree`, `find_files`, `search_files`, `read_files`, `read_file_lines`, `get_file_info`, `get_file_outline`, `create_file`, `edit_file`, `create_directory`, `move_file`, `copy_file`, `delete_file`, `apply_patch`, `run_command` (allowlisted utilities only, no shell, 30 s ceiling).
 
@@ -65,9 +67,9 @@ The MCP port is configurable in the app (1024–65535, excluding the native port
 ## App screens
 
 - **Home** — transport switch (native 17613 / MCP 8765), start/stop, live status, and quick actions into the other pages.
-- **Tools** — every built-in tool as a card with its own on/off switch (53 of 53 by default), plus the custom-tool list. A custom tool is defined on the phone: `python` (source or script path, run by the embedded interpreter) or `http` (method, URL, headers, body with `{{arg}}` substitution). The four `tool_*` management tools are always on, so the registry can never lock itself out.
+- **Tools** — every built-in tool as a card with its own on/off switch (65 of 65 by default), plus the custom-tool list. A custom tool is defined on the phone: `python` (source or script path, run by the embedded interpreter) or `http` (method, URL, headers, body with `{{arg}}` substitution). The four `tool_*` management tools are always on, so the registry can never lock itself out.
 - **Files** — browses the app-private workspace with its path and free space, imports a file from device storage through the system file picker (SAF), creates folders, and deletes entries — the way a voice-over or a render reaches `write_file_base64`. Folders open in place (breadcrumb at the top, back arrow steps out one level), and tapping a file opens an in-app preview: text/code/log files render selectable, images are decoded downsampled to fit, and anything else shows its MIME type plus a hex dump of the first KiB. *Open with* and *Share* hand the file to another app through the read-only `dev.snapgent.bridge.files` provider (no `androidx` dependency, not exported, every URI granted per Intent).
-- **Settings** — native/MCP ports, bearer token (show, copy, regenerate), appearance, auto-start, and the **GitHub** card: paste a Personal Access Token, tap *Validate and save*, and the username comes back from the API. The token is encrypted with the Android Keystore (AES-GCM) and never written in plaintext; saving an empty field keeps the existing token.
+- **Settings** — native/MCP ports, bearer token (show, copy, regenerate), appearance, auto-start, a **Device control** card that shows whether the accessibility service is on, opens the system Accessibility screen, reports whether background app launching is allowed and offers the **Display over other apps** permission (`app_launch` needs it: Android blocks activity starts from the background, and a visible 1×1 overlay is the exemption an ordinary app can grant itself), and the **GitHub** card: paste a Personal Access Token, tap *Validate and save*, and the username comes back from the API. The token is encrypted with the Android Keystore (AES-GCM) and never written in plaintext; saving an empty field keeps the existing token.
 - **Activity Logs** — bridge events filterable by ALL/INFO/WARN/ERROR, with a clear action.
 
 ## Security model
@@ -80,7 +82,7 @@ The MCP port is configurable in the app (1024–65535, excluding the native port
 
 ## Compatibility
 
-The extension wire protocol was taken from the SnapgentV3 extension: the native endpoint greets a client with a `connected` frame (reporting `bridge_version: android-0.1.4` plus the full tool catalog), answers `ping`/`pong`, serves `list_tools`, executes `call_tool`, and accepts `restart_mcp`. `stream` and `progress` frames are accepted as fire-and-forget telemetry.
+The extension wire protocol was taken from the SnapgentV3 extension: the native endpoint greets a client with a `connected` frame (reporting `bridge_version: android-<installed version>` plus the full tool catalog), answers `ping`/`pong`, serves `list_tools`, executes `call_tool`, and accepts `restart_mcp`. `stream` and `progress` frames are accepted as fire-and-forget telemetry.
 
 Telemetry-only caveat: the bridge exposes no desktop `studio` runtime, so `studio_status` intentionally returns nulls.
 
@@ -105,13 +107,14 @@ End-to-end tests drive the real device over ADB (`adb -s <serial> forward tcp:18
 python3 scripts/test_mcp_ws.py          # MCP JSON-RPC over the 8765 endpoint
 python3 scripts/test_mcp_device.py      # same MCP coverage, run on-device (release APK)
 python3 scripts/test_snapgent_ws.py     # SnapgentV3 native protocol on 17613
-python3 scripts/test_workspace_tools.py # workspace + tool catalog (expects 53 tools)
+python3 scripts/test_workspace_tools.py # workspace + tool catalog (expects 65 tools)
 python3 scripts/test_tool_registry.py   # custom python/http tools, switches, catalog count
 python3 scripts/test_python_packages.py # run_python: stdlib, requests, Pillow, output cap
 python3 scripts/test_render_tools.py    # render_still / encode_frames / render_info
+python3 scripts/test_device_tools.py    # device control: dump, screenshot, taps, keys, app_launch
 ```
 
-Every script drives the running bridge over ADB and fails with a non-zero exit code, so they work as a release gate.
+Every script drives the running bridge over ADB and fails with a non-zero exit code, so they work as a release gate. `test_device_tools.py` needs the accessibility service enabled and the overlay permission granted, because it proves that `app_launch` really brings another app to the foreground.
 
 `test_mcp_ws.py` reads the bearer token from `shared_prefs` with `run-as`, which only works on a debug APK; on a release build it asks for `SNAPGENT_TOKEN` instead. `test_mcp_device.py` covers the same ground without that limitation: it writes a small client into the app-private workspace and runs it with `run_python`, so the token stays on the phone and only counts are printed.
 

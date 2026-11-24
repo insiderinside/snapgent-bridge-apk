@@ -191,7 +191,7 @@ def main():
         print('WebSocket handshake: HTTP 101 OK')
         assert result.get('protocol') == '2025-06-18', result
         print('MCP initialize: protocol 2025-06-18 OK')
-        assert result.get('tools') == 53, result
+        assert result.get('tools') == 65, result
         print(f"tools/list: {result['tools']} tools OK")
         assert result.get('device_info') is True, result
         print('tools/call device_info: text content OK')

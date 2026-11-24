@@ -341,6 +341,46 @@ public class MainActivity extends Activity {
         });
         addCard(startup);
 
+        addSection("Device control", "Let agents drive this phone like adb");
+        LinearLayout device = card();
+        boolean controlReady = DeviceAutomationService.isReady();
+        device.addView(text("Accessibility service", 15, true));
+        device.addView(text(controlReady
+                ? "Enabled. Agents can tap, swipe, type, dump the screen and take screenshots."
+                : "Off. Turn on “Snapgent Bridge device control” in Accessibility to allow screen automation, "
+                        + "screenshots and UI dumps.", 12, false, muted));
+        spaceIn(device, 14);
+        Button accessibility = button(controlReady ? "✓  Device control enabled" : "Open Accessibility settings", !controlReady);
+        accessibility.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS));
+            } catch (Exception e) {
+                toast("Cannot open Accessibility settings on this device");
+            }
+        });
+        device.addView(accessibility, new LinearLayout.LayoutParams(-1, dp(46)));
+        spaceIn(device, 8);
+        boolean backgroundLaunch = android.provider.Settings.canDrawOverlays(this);
+        device.addView(text(backgroundLaunch
+                ? "Background app launching: allowed"
+                : "Background app launching: blocked by Android until overlays are allowed", 12, false, muted));
+        spaceIn(device, 8);
+        Button overlays = button(backgroundLaunch
+                ? "✓  Background launching allowed"
+                : "Allow launching apps in the background", !backgroundLaunch);
+        overlays.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        android.net.Uri.parse("package:" + getPackageName())));
+            } catch (Exception e) {
+                toast("Cannot open overlay settings on this device");
+            }
+        });
+        device.addView(overlays, new LinearLayout.LayoutParams(-1, dp(46)));
+        spaceIn(device, 8);
+        device.addView(text("Screenshots, gestures and text input go through the accessibility APIs: no root and no USB debugging.", 12, false, muted));
+        addCard(device);
+
         addSection("Security", "Manage your private access credential");
         LinearLayout security = card();
         security.addView(text("Authentication token", 15, true));

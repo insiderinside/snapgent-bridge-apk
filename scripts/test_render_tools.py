@@ -45,8 +45,8 @@ def main():
     try:
         greeting = ws.receive()
         assert greeting['type'] == 'connected', greeting
-        assert greeting['servers'][0]['tools'] == 53, greeting['servers']
-        print('Catalog: 53 Android tools OK')
+        assert greeting['servers'][0]['tools'] == 65, greeting['servers']
+        print('Catalog: 65 Android tools OK')
 
         # MediaCodec start-up plus per-frame encode easily exceeds the 8 s
         # default socket timeout used for the cheap catalog calls.

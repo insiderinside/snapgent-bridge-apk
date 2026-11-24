@@ -25,8 +25,8 @@ def main():
     try:
         greeting = ws.receive()
         assert greeting['type'] == 'connected', greeting
-        assert greeting['servers'][0]['tools'] == 53, greeting['servers']
-        print('Catalog: 53 Android tools OK')
+        assert greeting['servers'][0]['tools'] == 65, greeting['servers']
+        print('Catalog: 65 Android tools OK')
 
         def call(name, args=None):
             nonlocal counter
@@ -47,7 +47,7 @@ def main():
             return error
 
         listing = json.loads(ok('tool_list'))
-        assert listing['count'] == 53, listing['count']
+        assert listing['count'] == 65, listing['count']
         assert any(tool['name'] == 'tool_create' for tool in listing['tools'])
         print('tool_list:', listing['count'], 'tools OK')
 

@@ -158,7 +158,7 @@ def main():
         catalog = ws.call(2, 'tools/list')
         tools = catalog['result']['tools']
         names = [tool['name'] for tool in tools]
-        assert len(names) == 53, names
+        assert len(names) == 65, names
         assert 'device_info' in names and 'run_command' in names and 'git_status' in names
         print(f'tools/list: {len(names)} tools OK')
 
