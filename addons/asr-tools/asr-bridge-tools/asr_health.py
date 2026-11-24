@@ -4,6 +4,8 @@ A daemon is a separate process, so a tool call can outlive it: this probe is wha
 lets every ASR tool answer "service_down" in under two seconds instead of waiting
 for a timeout. Pass all=1 to check every known service at once.
 """
+# snapgent-service: base=18125 small=18126  (bridge "Services" page: one entry per port)
+
 import json
 import socket
 

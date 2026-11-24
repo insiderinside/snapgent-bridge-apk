@@ -2,7 +2,7 @@
 
 Android-native (Java 17) on-device bridge. It runs a loopback-only WebSocket server inside the phone and speaks both the MCP JSON-RPC protocol and the SnapgentV3 extension's native WebSocket protocol, so the Snapgent extension running in an Android browser can read files, edit a workspace, and drive Git on the device — without the desktop Python bridge.
 
-Current build: **0.1.9** (`dev.snapgent.bridge`, minSdk 26, targetSdk 34, versionCode 11).
+Current build: **0.2.0** (`dev.snapgent.bridge`, minSdk 26, targetSdk 34, versionCode 12). Latest published release: **v0.1.9**.
 
 ## Download the release APK
 
@@ -65,6 +65,17 @@ The MCP port is configurable in the app (1024–65535, excluding the native port
 **Tool registry (4):** `tool_create`, `tool_delete`, `tool_list`, `tool_set_enabled` — the client can define its own MCP tools on the phone. A `python` definition runs inside the embedded interpreter with its arguments pre-parsed into the dict `ARGS`; an `http` definition sends a request with `{{arg}}` substitution in the URL, headers and body. Both appear in `tools/list` immediately, so a Mac-side agent can extend the bridge without rebuilding the APK.
 
 A definition is one JSON file under `custom-tools/` in the workspace, so custom tools belong to whoever wrote them: an app update, a settings reset or one unreadable file cannot take the rest with it. `tool_list` reports `custom_tools_dir` and `custom_tools_files`, and the folder shows up in the Files page, which is also how a definition gets backed up or restored — dropping `<name>.json` in by hand makes it a working tool. Definitions written by builds before 0.1.9 are moved out of the preferences file automatically on first start.
+
+### Services page
+
+Tools that talk to something else on the phone — an ASR daemon, a local server — show where that dependency lives. A **⛁ Svc** tab lists every loopback service the stored tool definitions point at, with its port, whether it answers, and the tools bound to it; each such tool carries a `⛁ base up` style badge in the tool list, and `tool_list` reports the same links under `services` per tool (plus a top-level `services` array with `port`, `label`, `live`).
+
+A service is discovered from the definition itself, so there is no second place to register it:
+
+- an address in the code, URL, headers or body: `127.0.0.1:18125`, `localhost:18126`;
+- an optional naming comment, which is the only way a service gets a human name: `# snapgent-service: base=18125 small=18126`.
+
+The page only *observes* the port (a TCP connect with a 400 ms timeout) — it never starts or stops anything, because the bridge cannot exec binaries from its own storage. The probe runs on a background thread and the answer is cached for 10 s, so opening the page or the tool list never blocks on it; **↻ Probe now** forces a fresh check. A port found only as an address is shown as "Port 18125" rather than a guessed name.
 
 **Optional add-ons (`addons/`):** nothing here is built into the APK or enabled by default — skipping an add-on means not running its scripts. The local ASR add-on (`asr_transcribe`, `asr_job`, `asr_health`) transcribes a WAV on the phone with the real CTranslate2/faster-whisper engine and returns word-level timestamps, which Android's own recogniser does not provide. Install, proof and how to remove it again: [addons/README.md](addons/README.md); engine contract: [docs/ct2-android-asr.md](docs/ct2-android-asr.md).
 

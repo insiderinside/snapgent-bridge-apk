@@ -3,6 +3,8 @@
 The daemon is a separate process: pre-flight the health endpoint first so a dead
 service answers service_down immediately instead of holding the call for 70 s.
 """
+# snapgent-service: base=18125 small=18126  (bridge "Services" page: one entry per port)
+
 import json
 import os
 import socket

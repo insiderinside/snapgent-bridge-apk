@@ -155,7 +155,8 @@ public final class McpHandler {
             String name = entry.optString("name");
             result.put(new JSONObject().put("name", name).put("kind", "custom")
                     .put("description", entry.optString("description"))
-                    .put("enabled", ToolSettings.isEnabled(context, name)));
+                    .put("enabled", ToolSettings.isEnabled(context, name))
+                    .put("services", LocalServices.describe(context, name)));
         }
         // Management tools cannot be switched off: they are how a client creates and
         // toggles everything else, so they are always listed as enabled.

@@ -63,6 +63,10 @@ addons/asr-tools/asr-service-sync.py --dry-run   # what it would change, changes
 ASR_SYNC_TOOLS=0 addons/asr-tools/asr-daemon.sh start   # start without touching the rule
 ```
 
+The tools also name their services in a comment (`# snapgent-service: base=18125 small=18126`),
+which is what the bridge's **⛁ Svc** tab and the per-tool `⛁ 2 svc · 1 up` badge read — see
+[docs/ct2-android-asr.md](../docs/ct2-android-asr.md#services-page-and-the-service-badge).
+
 `asr-service-sync.py` forwards both service ports first, then probes `base`
 (18125) and `small` (18126). Without the forward a running daemon looks dead, and
 the rule would switch the tools off. Any live service keeps them on: starting

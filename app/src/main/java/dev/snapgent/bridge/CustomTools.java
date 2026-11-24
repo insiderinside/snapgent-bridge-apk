@@ -16,7 +16,9 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -266,18 +268,35 @@ final class CustomTools {
             tools.put(new JSONObject().put("name", name).put("kind", "management").put("enabled", true));
         }
         JSONArray definitions = ToolSettings.customTools(context);
+        Map<String, List<LocalServices.Service>> bound = LocalServices.byTool(context);
         for (int i = 0; i < definitions.length(); i++) {
             JSONObject definition = definitions.optJSONObject(i);
             if (definition == null) continue;
             String name = definition.optString("name");
+            JSONArray services = new JSONArray();
+            List<LocalServices.Service> linked = bound.get(name);
+            if (linked != null) {
+                for (LocalServices.Service service : linked) services.put(LocalServices.json(service));
+            }
             tools.put(new JSONObject().put("name", name).put("kind", "custom:" + definition.optString("kind"))
                     .put("enabled", ToolSettings.isEnabled(context, name))
-                    .put("description", definition.optString("description")));
+                    .put("description", definition.optString("description"))
+                    // Empty when the tool talks to nothing on this device; otherwise the
+                    // ports it connects to, so a client can see the dependency too.
+                    .put("services", services));
         }
         return new JSONObject().put("count", tools.length()).put("tools", tools)
                 .put("custom_tools_dir", CustomToolStore.DIR)
                 .put("custom_tools_files", new JSONArray(CustomToolStore.fileNames(context)))
+                .put("services", servicesSummary())
                 .toString();
+    }
+
+    /** Every loopback service the custom tools point at, for {@code tool_list}. */
+    private JSONArray servicesSummary() {
+        JSONArray services = new JSONArray();
+        for (LocalServices.Service service : LocalServices.discover(context)) services.put(LocalServices.json(service));
+        return services;
     }
 
     private String runDefinition(String name, JSONObject args) throws IOException, JSONException {

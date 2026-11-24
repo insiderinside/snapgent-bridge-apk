@@ -1,4 +1,6 @@
 """Collects the result of a running transcription job (custom bridge tool, kind=python)."""
+# snapgent-service: base=18125 small=18126  (bridge "Services" page: one entry per port)
+
 import json
 import socket
 import time

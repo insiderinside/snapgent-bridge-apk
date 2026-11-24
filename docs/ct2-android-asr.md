@@ -286,6 +286,18 @@ A disabled tool is refused by the bridge (`McpHandler`) with
 `Tool is switched off on the device: <name>. Enable it in the Snapgent Bridge settings
 or with tool_set_enabled.`
 
+### Services page and the service badge
+
+The three snippets carry one naming comment near the top:
+
+```python
+# snapgent-service: base=18125 small=18126
+```
+
+That line is what turns the two ports into named entries on the app's **⛁ Svc** tab. Without it the bridge still finds a port from a literal address (`127.0.0.1:18125`) but can only call it "Port 18125" — it never guesses a name from a variable. Each ASR tool then shows `⛁ 2 svc · 1 up` in the tool list, and `tool_list` returns the same binding as `"services": [{"label":"base","port":18125,"live":true}, …]`.
+
+Reinstall the snippets after editing the comment (`install-asr-bridge-tools.py` reads the files from `addons/asr-tools/asr-bridge-tools/`), then open the Services tab: with only `base` running it reads `2 services detected · 1 answering · 6 tool links`, `base` green and `small` grey.
+
 ### Gotchas found while wiring this up
 
 - `wait "$launch"` after backgrounding the on-device start hung the script even after

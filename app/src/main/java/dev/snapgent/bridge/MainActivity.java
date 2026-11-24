@@ -133,7 +133,8 @@ public class MainActivity extends Activity {
         content.removeAllViews();
         boolean viewing = page.equals("files") && fileView != null;
         headerTitle.setText(viewing ? "File" : page.equals("settings") ? "Settings" : page.equals("logs") ? "Activity Logs"
-                : page.equals("tools") ? "Tools" : page.equals("files") ? "Files" : "Snapgent Bridge");
+                : page.equals("tools") ? "Tools" : page.equals("services") ? "Services"
+                : page.equals("files") ? "Files" : "Snapgent Bridge");
         headerAction.setText(page.equals("home") ? "⚙" : "‹");
         if (viewing) {
             headerAction.setOnClickListener(v -> { fileView = null; renderPage(); });
@@ -145,11 +146,13 @@ public class MainActivity extends Activity {
         bottomNav.removeAllViews();
         addNavButton("⌂", "home");
         addNavButton("⚒ Tools", "tools");
+        addNavButton("⛁ Svc", "services");
         addNavButton("▤ Files", "files");
         addNavButton("≡ Logs", "logs");
         if (page.equals("settings")) renderSettings();
         else if (page.equals("logs")) renderLogs();
         else if (page.equals("tools")) renderTools();
+        else if (page.equals("services")) renderServices();
         else if (page.equals("files")) renderFiles();
         else renderDashboard();
     }
@@ -525,6 +528,13 @@ public class MainActivity extends Activity {
         addText("Switch a tool off to hide it from MCP clients. Custom tools run on this device.", 13, false, muted);
         space(18);
 
+        // A tool that points at a loopback port carries a "service" badge; probing here
+        // keeps that badge honest without a second trip to the Services page.
+        java.util.Map<String, List<LocalServices.Service>> bound = LocalServices.byTool(this);
+        if (LocalServices.needsCheck(LocalServices.discover(this))) {
+            LocalServices.refreshAsync(this, () -> { if (page.equals("tools")) renderPage(); });
+        }
+
         org.json.JSONArray summaries;
         int enabledCount = 0;
         int customCount = 0;
@@ -568,7 +578,7 @@ public class MainActivity extends Activity {
             if (entry == null || !"builtin".equals(entry.optString("kind"))) continue;
             if (!firstBuiltin) divider(builtin);
             firstBuiltin = false;
-            toolRow(builtin, entry);
+            toolRow(builtin, entry, null);
         }
         addCard(builtin);
 
@@ -585,13 +595,110 @@ public class MainActivity extends Activity {
                 if (entry == null || !"custom".equals(entry.optString("kind"))) continue;
                 if (!firstCustom) divider(customCard);
                 firstCustom = false;
-                toolRow(customCard, entry);
+                toolRow(customCard, entry, bound.get(entry.optString("name")));
             }
         }
         addCard(customCard);
     }
 
-    private void toolRow(LinearLayout parent, org.json.JSONObject entry) {
+    // ------------------------------------------------------------- services page
+
+    private void renderServices() {
+        addLabel("LOOPBACK SERVICES");
+        addText("Services", 25, true, textColor);
+        addText("Ports your custom tools connect to. A tool is linked here because its own definition names the port.", 13, false, muted);
+        space(18);
+
+        List<LocalServices.Service> services = LocalServices.discover(this);
+        if (LocalServices.needsCheck(services)) {
+            LocalServices.refreshAsync(this, () -> { if (page.equals("services")) renderPage(); });
+        }
+
+        int links = 0;
+        for (LocalServices.Service service : services) links += service.tools.size();
+        LinearLayout summary = card();
+        summary.addView(text(services.size() + " service" + (services.size() == 1 ? "" : "s") + " detected", 18, true));
+        summary.addView(text(LocalServices.liveCount(services) + " answering · " + links + " tool link"
+                + (links == 1 ? "" : "s") + (LocalServices.probed(services) ? "" : " · probing…"), 12, false, muted));
+        spaceIn(summary, 12);
+        Button probe = button("↻ Probe now", false);
+        probe.setOnClickListener(v -> {
+            LocalServices.refreshAsync(this, () -> { if (page.equals("services")) renderPage(); });
+            toast("Probing local services");
+        });
+        summary.addView(probe, new LinearLayout.LayoutParams(-1, dp(44)));
+        addCard(summary);
+
+        if (services.isEmpty()) {
+            addSection("Nothing linked yet", "A service appears here once a tool names its port");
+            LinearLayout empty = card();
+            empty.addView(text("No custom tool points at a loopback port", 14, true));
+            spaceIn(empty, 6);
+            empty.addView(text("Name the address in the tool body (127.0.0.1:18125), or declare it in a comment:\n"
+                    + "# snapgent-service: base=18125", 12, false, muted));
+            addCard(empty);
+            return;
+        }
+
+        addSection("Detected services", "Read from the tool definitions on this device");
+        for (LocalServices.Service service : services) {
+            LinearLayout serviceCard = card();
+            Boolean state = LocalServices.live(service.port);
+            LinearLayout head = row();
+            TextView dot = text(Boolean.TRUE.equals(state) ? "●" : "○", 18, true);
+            dot.setTextColor(Boolean.TRUE.equals(state) ? green : muted);
+            head.addView(dot);
+            head.addView(text("  " + service.title(), 15, true));
+            serviceCard.addView(head);
+            spaceIn(serviceCard, 4);
+            serviceCard.addView(text(service.endpoint() + " · "
+                    + (state == null ? "not probed yet" : state ? "answering" : "not answering"), 12, false, muted));
+            spaceIn(serviceCard, 10);
+            divider(serviceCard);
+            spaceIn(serviceCard, 8);
+            serviceCard.addView(text("Tools: " + join(service.tools), 12, true));
+            serviceCard.addView(text(service.enabledCount() + " of " + service.tools.size() + " enabled"
+                    + (service.allDisabled() ? " — every call is refused while all are off" : ""), 11, false, muted));
+            spaceIn(serviceCard, 8);
+            serviceCard.addView(text("The bridge only watches this port; the service itself runs outside the app.", 11, false, muted));
+            addCard(serviceCard);
+        }
+    }
+
+    /** Small marker on a tool row: the loopback service the tool is bound to, and whether it answers. */
+    private TextView serviceBadge(List<LocalServices.Service> linked) {
+        int live = 0;
+        int down = 0;
+        for (LocalServices.Service service : linked) {
+            Boolean state = LocalServices.live(service.port);
+            if (state == null) continue;
+            if (state) live++; else down++;
+        }
+        String label;
+        if (linked.size() == 1) {
+            label = "⛁ " + linked.get(0).title() + (live > 0 ? " up" : down > 0 ? " down" : "");
+        } else {
+            label = "⛁ " + linked.size() + " svc" + (live > 0 ? " · " + live + " up" : "");
+        }
+        TextView badge = text(label, 10, true, live > 0 ? green : muted);
+        badge.setPadding(dp(7), dp(3), dp(7), dp(3));
+        badge.setBackground(round(bg, 8, live > 0 ? green : border));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, -2);
+        params.setMargins(dp(6), 0, dp(6), 0);
+        badge.setLayoutParams(params);
+        return badge;
+    }
+
+    private String join(List<String> values) {
+        StringBuilder joined = new StringBuilder();
+        for (String value : values) {
+            if (joined.length() > 0) joined.append(", ");
+            joined.append(value);
+        }
+        return joined.toString();
+    }
+
+    private void toolRow(LinearLayout parent, org.json.JSONObject entry, List<LocalServices.Service> linked) {
         String name = entry.optString("name");
         LinearLayout item = row();
         item.setPadding(0, dp(9), 0, dp(9));
@@ -605,6 +712,10 @@ public class MainActivity extends Activity {
         labels.addView(title);
         labels.addView(description);
         item.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
+
+        if (linked != null && !linked.isEmpty()) {
+            item.addView(serviceBadge(linked), new LinearLayout.LayoutParams(-2, -2));
+        }
 
         if ("custom".equals(entry.optString("kind"))) {
             Button remove = button("✕", false);
