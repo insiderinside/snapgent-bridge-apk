@@ -1,5 +1,8 @@
 # CTranslate2 / faster-whisper on Android arm64 (word timestamps)
 
+This is an optional add-on (`addons/`): none of it is compiled into the APK or
+enabled by default. Not running these scripts leaves the app exactly as released.
+
 Status: **proven on device** — 2026-11-24, phone `23043RP34G` (Snapdragon 865,
 Android 14, arm64-v8a), model `Systran/faster-whisper-small`, Indonesian audio.
 
@@ -18,7 +21,7 @@ build problem, not a rewrite.
 ## Build
 
 ```bash
-scripts/build-ct2-android.sh /tmp/ct2-android
+addons/ct2-whisper/build-ct2-android.sh /tmp/ct2-android
 ```
 
 Key decisions, all required:
@@ -107,7 +110,7 @@ takes 24 s while cool takes ~33 s warm. Every number below is a single fresh run
 ## Measured quality
 
 Against `~/kontent/asr_words.json` (Python faster-whisper, `small` float16, beam 5),
-same audio, matched words only (`scripts/compare-word-timings.py`). Precision/recall are
+same audio, matched words only (`addons/ct2-whisper/compare-word-timings.py`). Precision/recall are
 computed against exactly the words that were emitted, so a model that transcribes more
 text does not automatically look better; the row to watch is p90 start delta.
 
@@ -204,10 +207,10 @@ tool never rebuilds the app.
 ### Daemon
 
 ```bash
-scripts/asr-daemon.sh start     # after every reboot; prints the ready line
-scripts/asr-daemon.sh status
-scripts/asr-daemon.sh logs 40
-scripts/asr-daemon.sh stop
+addons/asr-tools/asr-daemon.sh start     # after every reboot; prints the ready line
+addons/asr-tools/asr-daemon.sh status
+addons/asr-tools/asr-daemon.sh logs 40
+addons/asr-tools/asr-daemon.sh stop
 ```
 
 Environment overrides: `ASR_PORT`, `ASR_MODEL`, `ASR_BEAM`, `ASR_THREADS`,
@@ -230,8 +233,8 @@ timeout can collect the result later instead of re-running the decode.
 ### Tools
 
 ```bash
-scripts/install-asr-bridge-tools.py            # installs/refreshes all three
-scripts/install-asr-bridge-tools.py --only asr_transcribe
+addons/asr-tools/install-asr-bridge-tools.py            # installs/refreshes all three
+addons/asr-tools/install-asr-bridge-tools.py --only asr_transcribe
 ```
 
 | Tool | Arguments | Returns |

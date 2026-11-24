@@ -5,10 +5,10 @@
 # binaries from its own storage, but it can open a socket to 127.0.0.1, and the
 # daemon can read files anywhere the shell user can (e.g. /sdcard/Download).
 #
-#   scripts/asr-daemon.sh start     # after every reboot
-#   scripts/asr-daemon.sh status
-#   scripts/asr-daemon.sh logs
-#   scripts/asr-daemon.sh stop
+#   addons/asr-tools/asr-daemon.sh start     # after every reboot
+#   addons/asr-tools/asr-daemon.sh status
+#   addons/asr-tools/asr-daemon.sh logs
+#   addons/asr-tools/asr-daemon.sh stop
 #
 # Environment overrides: ASR_PORT (18125), ASR_MODEL (/data/local/tmp/ct2/model-base),
 # ASR_BEAM (5), ASR_THREADS (6), ASR_COMPUTE (int8), ASR_MIN_SPEECH (0.25).

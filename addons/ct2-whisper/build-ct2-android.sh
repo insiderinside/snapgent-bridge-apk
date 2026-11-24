@@ -6,7 +6,7 @@
 # and emits word-level timestamps (DTW cross-attention, same engine faster-whisper uses).
 #
 # Usage:
-#   scripts/build-ct2-android.sh [workdir]
+#   addons/ct2-whisper/build-ct2-android.sh [workdir]
 #
 # Outputs in <workdir>:
 #   ct2/build-android/libctranslate2.so
@@ -18,7 +18,7 @@ NDK=${ANDROID_NDK_HOME:-$HOME/Library/Android/sdk/ndk/29.0.14206865}
 API=24
 ABI=arm64-v8a
 CT2_TAG=v4.9.1
-REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 
 TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/darwin-x86_64"
 [ -x "$TOOLCHAIN/bin/aarch64-linux-android${API}-clang++" ] || {
@@ -70,15 +70,15 @@ mkdir -p wrt
 if [ ! -f wrt/mel80.bin ]; then
 	curl -sL -o wrt/mel_filters.npz \
 		https://raw.githubusercontent.com/openai/whisper/main/whisper/assets/mel_filters.npz
-	python3 "$REPO_ROOT/scripts/export-mel-filters.py" wrt/mel_filters.npz wrt/mel80.bin
+	python3 "$SCRIPT_DIR/export-mel-filters.py" wrt/mel_filters.npz wrt/mel80.bin
 fi
 
 # 5. Runner binary (JNI-ready C++ entry point, currently a CLI).
 "$TOOLCHAIN/bin/aarch64-linux-android${API}-clang++" -O2 -std=c++17 \
 	-I"$WORK/ct2/include" \
 	-Wno-deprecated-literal-operator \
-	"$REPO_ROOT/app/src/main/cpp/ct2-whisper/runner.cc" \
-	"$REPO_ROOT/app/src/main/cpp/ct2-whisper/mel.cc" \
+	"$SCRIPT_DIR/runner.cc" \
+	"$SCRIPT_DIR/mel.cc" \
 	-L"$WORK/ct2/build-android" -lctranslate2 \
 	-o wrt/whisper_ct2_arm64
 

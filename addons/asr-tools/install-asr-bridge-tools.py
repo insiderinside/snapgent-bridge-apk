@@ -3,13 +3,13 @@
 
 The tools are plain Python snippets stored on the phone by the bridge itself, so
 nothing has to be rebuilt or reinstalled when they change. They talk to the
-CTranslate2/Whisper daemon (`whisper_ct2_arm64 --serve`, see scripts/asr-daemon.sh)
+CTranslate2/Whisper daemon (`whisper_ct2_arm64 --serve`, see addons/asr-tools/asr-daemon.sh)
 over 127.0.0.1, because the Android app process is not allowed to exec binaries
 from its own storage.
 
 Usage:
-    scripts/asr-daemon.sh start            # once per boot
-    scripts/install-asr-bridge-tools.py    # (re)install asr_health/asr_transcribe/asr_job
+    addons/asr-tools/asr-daemon.sh start            # once per boot
+    addons/asr-tools/install-asr-bridge-tools.py    # (re)install asr_health/asr_transcribe/asr_job
 
 The bridge's native endpoint on tcp:17613 accepts a WebSocket without the MCP
 token (it only requires a browser-like Origin header), which is what the bridge UI

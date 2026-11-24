@@ -8,7 +8,7 @@
 # Model diunduh dari https://huggingface.co/Systran/faster-whisper-<name>/resolve/main/
 # (model.bin, config.json, tokenizer.json, vocabulary.txt) dan TIDAK dibundel ke APK.
 #
-# Contoh: scripts/bench-asr-presets.sh
+# Contoh: addons/ct2-whisper/bench-asr-presets.sh
 # Sebelum membandingkan konfigurasi, diamkan HP ~90 detik: di Snapdragon 865 suhu
 # 47-50 C membuat run yang sama 24 s (dingin) vs ~33 s (panas).
 set -euo pipefail
@@ -35,4 +35,4 @@ run model          5 6 small-b5-t6
 
 echo
 echo "Bandingkan akurasi hasil terbaru:"
-echo "  scripts/compare-word-timings.py ~/kontent/asr_words.json <hasil.json>"
+echo "  addons/ct2-whisper/compare-word-timings.py ~/kontent/asr_words.json <hasil.json>"

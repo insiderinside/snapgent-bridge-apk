@@ -3,7 +3,7 @@
 
 The C++ runner reads it as (kNmels x (N_FFT/2 + 1)) little-endian float32.
 
-  python3 scripts/export-mel-filters.py /tmp/mel_filters.npz /tmp/mel80.bin
+  python3 addons/ct2-whisper/export-mel-filters.py /tmp/mel_filters.npz /tmp/mel80.bin
 
 The npz comes from OpenAI Whisper assets:
   https://raw.githubusercontent.com/openai/whisper/main/whisper/assets/mel_filters.npz
