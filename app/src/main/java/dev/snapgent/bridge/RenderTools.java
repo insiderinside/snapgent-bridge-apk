@@ -1,18 +1,32 @@
 package dev.snapgent.bridge;
 
+import android.app.Presentation;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.HardwareRenderer;
+import android.graphics.PixelFormat;
+import android.graphics.RecordingCanvas;
+import android.graphics.RenderNode;
+import android.hardware.display.DisplayManager;
+import android.hardware.display.VirtualDisplay;
 import android.media.Image;
+import android.media.ImageReader;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
 import android.media.MediaFormat;
 import android.media.MediaMuxer;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.Settings;
+import android.util.DisplayMetrics;
+import android.view.Gravity;
 import android.view.View;
+import android.view.WindowManager;
+import android.widget.FrameLayout;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -34,6 +48,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -62,6 +77,19 @@ final class RenderTools {
     private static final int CAPTURE_TIMEOUT_MS = 30_000;
     private static final int MAX_HTML_BYTES = 8 * 1024 * 1024;
 
+    /**
+     * Capture path. {@code gpu} keeps hardware acceleration on so WebGL/Three.js is
+     * rendered by the GPU, and reads the frame back through {@link RenderNode} (or a
+     * virtual display); {@code software} is the pre-0.1.8 path that forced
+     * {@link View#LAYER_TYPE_SOFTWARE} and drew the WebView into a software bitmap,
+     * which silently disables WebGL.
+     */
+    private static final String MODE_GPU = "gpu";
+    private static final String MODE_SOFTWARE = "software";
+
+    private static final String MODE_PROPERTY = "Capture path: 'gpu' keeps WebGL on the GPU (default), "
+            + "'software' forces the legacy software layer";
+
     private final Context context;
 
     RenderTools(Context context) {
@@ -85,11 +113,14 @@ final class RenderTools {
                 .put("height", property("integer", "Viewport height in pixels (default 1080)"))
                 .put("seek_ms", property("integer", "Value passed to window.__snapgentSeek(ms) before capture"))
                 .put("wait_ms", property("integer", "Settle time after load/seek before the frame is drawn (default 350)"))
+                .put("render_mode", property("string", MODE_PROPERTY))
                 .put("output", property("string", "PNG path relative to app-private storage (default render/still.png)"));
 
         tools.put(new JSONObject()
                 .put("name", "render_still")
                 .put("description", "Render one HTML/Canvas/Three.js frame in an off-screen WebView and save it as PNG. "
+                        + "render_mode=gpu (default) keeps WebGL on the GPU and reads the frame back through RenderNode "
+                        + "or a virtual display; render_mode=software falls back to the legacy software layer. "
                         + "Replaces Playwright screenshots on device.")
                 .put("inputSchema", new JSONObject().put("type", "object")
                         .put("properties", stillProps).put("additionalProperties", false)));
@@ -102,6 +133,7 @@ final class RenderTools {
                 .put("fps", property("integer", "Frames per second (default 30, max 60)"))
                 .put("duration_ms", property("integer", "Total duration in milliseconds (default 3000)"))
                 .put("wait_ms", property("integer", "Settle time after each seek (default 40)"))
+                .put("render_mode", property("string", MODE_PROPERTY))
                 .put("bitrate", property("integer", "Video bitrate in bits per second (default 8000000)"))
                 .put("audio_path", property("string", "Optional 16-bit PCM WAV file in app-private storage to mux as AAC"))
                 .put("output", property("string", "MP4 path relative to app-private storage (default render/video.mp4)"));
@@ -109,7 +141,8 @@ final class RenderTools {
         tools.put(new JSONObject()
                 .put("name", "render_video")
                 .put("description", "Render an HTML/Canvas/Three.js animation to an H.264 MP4 on device using MediaCodec. "
-                        + "Calls window.__snapgentSeek(ms) when the page defines it; optional WAV soundtrack is muxed as AAC.")
+                        + "Calls window.__snapgentSeek(ms) when the page defines it; render_mode=gpu (default) captures "
+                        + "through the GPU so WebGL survives; optional WAV soundtrack is muxed as AAC.")
                 .put("inputSchema", new JSONObject().put("type", "object")
                         .put("properties", videoProps).put("additionalProperties", false)));
 
@@ -190,10 +223,35 @@ final class RenderTools {
         info.put("encoders", encoders);
         info.put("muxer", "MP4 (H.264 + AAC)");
         info.put("stillFormat", "PNG");
-        info.put("note", "Still frames are drawn from an off-screen WebView; WebView (Chromium) is the "
-                + "same engine family as Playwright but not the desktop build. Animation is deterministic "
-                + "when the page exposes window.__snapgentSeek(ms).");
+        info.put("renderModes", new JSONArray().put(MODE_GPU).put(MODE_SOFTWARE));
+        info.put("overlayAllowed", Settings.canDrawOverlays(context));
+        info.put("capturePaths", new JSONArray()
+                .put("gpu: RenderNode + HardwareRenderer + ImageReader (API 29+)")
+                .put("gpu: VirtualDisplay + Presentation + ImageReader")
+                .put("software: forced LAYER_TYPE_SOFTWARE + View.draw"));
+        info.put("webgl", probeWebGl());
+        info.put("note", "render_mode=gpu keeps hardware acceleration on, so WebGL runs on the GPU; the frame is "
+                + "read back from a RenderNode or a virtual display. render_mode=software forces the legacy "
+                + "software layer, which disables WebGL. WebView (Chromium) is the same engine family as "
+                + "Playwright but not the desktop build. Animation is deterministic when the page exposes "
+                + "window.__snapgentSeek(ms).");
         return info.toString(2);
+    }
+
+    /** WebGL renderer string from a throwaway GPU-mode WebView ("none" when WebGL is unavailable). */
+    private String probeWebGl() {
+        WebSession session = null;
+        try {
+            WebDocument blank = new WebDocument(
+                    "<!doctype html><html><body style=\"margin:0;background:#000\"></body></html>",
+                    "file://" + context.getFilesDir().getAbsolutePath() + "/");
+            session = WebSession.open(context, blank, 64, 64, MODE_GPU);
+            return session.webgl == null ? "unknown" : session.webgl;
+        } catch (Throwable t) {
+            return "unavailable: " + (t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage());
+        } finally {
+            if (session != null) session.close();
+        }
     }
 
     private String renderStill(JSONObject args) throws IOException, JSONException {
@@ -202,11 +260,12 @@ final class RenderTools {
         int height = dim(args.optInt("height", DEFAULT_HEIGHT));
         int waitMs = clamp(args.optInt("wait_ms", 350), 0, 30_000);
         int seekMs = args.optInt("seek_ms", -1);
+        String mode = renderMode(args);
         String output = args.optString("output", "render/still.png");
         File out = resolve(output);
         ensureParent(out);
 
-        WebSession session = WebSession.open(context, doc, width, height);
+        WebSession session = WebSession.open(context, doc, width, height, mode);
         try {
             Bitmap bitmap = session.capture(seekMs, waitMs);
             try (FileOutputStream stream = new FileOutputStream(out)) {
@@ -226,6 +285,9 @@ final class RenderTools {
                 .put("height", height)
                 .put("bytes", out.length())
                 .put("format", "png")
+                .put("render_mode", session.modeUsed)
+                .put("requested_mode", mode)
+                .put("webgl", session.webgl)
                 .toString(2);
     }
 
@@ -237,6 +299,7 @@ final class RenderTools {
         int durationMs = clamp(args.optInt("duration_ms", 3000), 50, 600_000);
         int waitMs = clamp(args.optInt("wait_ms", 40), 0, 5_000);
         int bitrate = clamp(args.optInt("bitrate", 8_000_000), 200_000, 50_000_000);
+        String mode = renderMode(args);
         String output = args.optString("output", "render/video.mp4");
         File out = resolve(output);
         ensureParent(out);
@@ -247,7 +310,7 @@ final class RenderTools {
             throw new IOException("Requested " + frameCount + " frames; the on-device limit is " + MAX_FRAMES);
         }
 
-        WebSession session = WebSession.open(context, doc, width, height);
+        WebSession session = WebSession.open(context, doc, width, height, mode);
         VideoEncoder encoder = new VideoEncoder(width, height, fps, bitrate, out, audio);
         try {
             for (int i = 0; i < frameCount; i++) {
@@ -277,6 +340,9 @@ final class RenderTools {
                 .put("audio", audio != null)
                 .put("bytes", out.length())
                 .put("format", "mp4")
+                .put("render_mode", session.modeUsed)
+                .put("requested_mode", mode)
+                .put("webgl", session.webgl)
                 .toString(2);
     }
 
@@ -381,16 +447,30 @@ final class RenderTools {
         private final Context context;
         private final int width;
         private final int height;
+        private final String mode;
         private WebView webView;
+        private WindowManager windowManager;
+        private boolean windowAttached;
+        private ImageReader displayReader;
+        private VirtualDisplay virtualDisplay;
+        private Presentation presentation;
+        private boolean softwareCommitted;
 
-        private WebSession(Context context, int width, int height) {
+        /** Capture path actually used by the last frame: gpu, gpu-virtualdisplay or software. */
+        private String modeUsed = MODE_GPU;
+        /** WebGL renderer string reported by the page's context, e.g. "Adreno (TM) 730". */
+        private String webgl = "unknown";
+
+        private WebSession(Context context, int width, int height, String mode) {
             this.context = context;
             this.width = width;
             this.height = height;
+            this.mode = mode;
         }
 
-        static WebSession open(Context context, WebDocument doc, int width, int height) throws IOException {
-            WebSession session = new WebSession(context, width, height);
+        static WebSession open(Context context, WebDocument doc, int width, int height, String mode)
+                throws IOException {
+            WebSession session = new WebSession(context, width, height, mode);
             session.create(doc);
             return session;
         }
@@ -401,7 +481,12 @@ final class RenderTools {
 
             MAIN.post(() -> {
                 try {
-                    WebView view = new WebView(context);
+                    // Render at 1 CSS pixel per output pixel. With the phone's own density
+                    // (often 440 dpi) a 1920x1080 request laid the page out as 1920 CSS px
+                    // -- about 5300 device pixels -- so only the top-left corner was
+                    // captured and Chromium dropped tiles for lack of memory.
+                    Context renderContext = pixelContext(context, width, height);
+                    WebView view = new WebView(renderContext);
                     WebSettings settings = view.getSettings();
                     settings.setJavaScriptEnabled(true);
                     settings.setDomStorageEnabled(true);
@@ -414,7 +499,11 @@ final class RenderTools {
                     }
                     settings.setMediaPlaybackRequiresUserGesture(false);
                     view.setBackgroundColor(Color.TRANSPARENT);
-                    view.setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+                    if (MODE_SOFTWARE.equals(mode)) {
+                        // Legacy path: the software layer is what let View.draw() read the
+                        // frame, and it is also what turned WebGL off.
+                        view.setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+                    }
                     view.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
                             View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
                     view.layout(0, 0, width, height);
@@ -431,6 +520,14 @@ final class RenderTools {
                         }
                     });
                     webView = view;
+                    if (MODE_GPU.equals(mode)) {
+                        try {
+                            attachWindow(view);
+                        } catch (Throwable t) {
+                            BridgeLog.warn("RenderTools", "No GPU window for this render (" + describe(t)
+                                    + "); falling back to the software capture path");
+                        }
+                    }
                     view.loadDataWithBaseURL(doc.baseUrl, doc.html, "text/html", "UTF-8", null);
                 } catch (Throwable t) {
                     failure.compareAndSet(null, t);
@@ -450,9 +547,82 @@ final class RenderTools {
                 Throwable t = failure.get();
                 throw new IOException("WebView error: " + (t.getMessage() == null ? t.toString() : t.getMessage()));
             }
+            if (MODE_GPU.equals(mode)) probeWebGl();
+        }
+
+        /**
+         * Puts the WebView in a real window so Chromium's compositor has a surface to
+         * draw WebGL into. The window sits off-screen: nothing is visible to the user,
+         * and the pixels are read back through a RenderNode or a virtual display.
+         */
+        /**
+         * A context whose density makes one CSS pixel one output pixel, so a
+         * {@code width x height} request lays the page out exactly that size.
+         */
+        private static Context pixelContext(Context base, int width, int height) {
+            android.content.res.Configuration configuration =
+                    new android.content.res.Configuration(base.getResources().getConfiguration());
+            configuration.densityDpi = DisplayMetrics.DENSITY_MEDIUM;
+            configuration.screenWidthDp = width;
+            configuration.screenHeightDp = height;
+            configuration.smallestScreenWidthDp = Math.min(width, height);
+            return base.createConfigurationContext(configuration);
+        }
+
+        private void attachWindow(WebView view) throws IOException {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+                throw new IOException("overlay windows need Android 8.0 or newer");
+            }
+            if (!Settings.canDrawOverlays(context)) {
+                throw new IOException("the 'Display over other apps' grant is missing");
+            }
+            WindowManager manager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+            if (manager == null) throw new IOException("no window manager");
+            int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                    : WindowManager.LayoutParams.TYPE_PHONE;
+            WindowManager.LayoutParams params = new WindowManager.LayoutParams(width, height, type,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                            | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                            | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                    PixelFormat.TRANSLUCENT);
+            params.gravity = Gravity.TOP | Gravity.START;
+            params.x = -(width + 64);
+            params.y = 0;
+            params.setTitle("snapgent-render");
+            manager.addView(view, params);
+            windowManager = manager;
+            windowAttached = true;
         }
 
         Bitmap capture(int seekMs, int waitMs) throws IOException {
+            if (MODE_GPU.equals(mode) && !softwareCommitted) {
+                Bitmap gpu = grabAfterDelay(seekMs, waitMs, this::grabHardwareNode);
+                if (gpu != null) {
+                    modeUsed = "gpu";
+                    return gpu;
+                }
+                Bitmap virtual = grabAfterDelay(seekMs, waitMs, this::grabVirtualDisplay);
+                if (virtual != null) {
+                    modeUsed = "gpu-virtualdisplay";
+                    return virtual;
+                }
+                BridgeLog.warn("RenderTools", "GPU capture read back no usable frame; continuing on the software path");
+                softwareCommitted = true;
+            }
+            Bitmap software = grabAfterDelay(seekMs, waitMs, this::grabSoftware);
+            if (software == null) throw new IOException("Frame capture produced no bitmap");
+            modeUsed = MODE_SOFTWARE;
+            return software;
+        }
+
+        private interface FrameSource {
+            Bitmap grab() throws Exception;
+        }
+
+        /** Seeks, waits on the main looper, then runs one grab; null means "that path failed". */
+        private Bitmap grabAfterDelay(int seekMs, int waitMs, FrameSource source) throws IOException {
             final CountDownLatch done = new CountDownLatch(1);
             final AtomicReference<Bitmap> shot = new AtomicReference<>();
             final AtomicReference<Throwable> failure = new AtomicReference<>();
@@ -466,11 +636,7 @@ final class RenderTools {
                     }
                     MAIN.postDelayed(() -> {
                         try {
-                            Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-                            Canvas canvas = new Canvas(bitmap);
-                            canvas.drawColor(Color.BLACK);
-                            webView.draw(canvas);
-                            shot.set(bitmap);
+                            shot.set(source.grab());
                         } catch (Throwable t) {
                             failure.compareAndSet(null, t);
                         } finally {
@@ -492,16 +658,260 @@ final class RenderTools {
                 throw new IOException("Interrupted while capturing a frame");
             }
             if (failure.get() != null) {
-                Throwable t = failure.get();
-                throw new IOException("Frame capture failed: " + (t.getMessage() == null ? t.toString() : t.getMessage()));
+                throw new IOException("Frame capture failed: " + describe(failure.get()));
             }
-            Bitmap bitmap = shot.get();
-            if (bitmap == null) throw new IOException("Frame capture produced no bitmap");
+            return shot.get();
+        }
+
+        /** GPU path 1: record the WebView into a RenderNode and replay it on the GPU. */
+        private Bitmap grabHardwareNode() {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || webView == null) return null;
+            ImageReader reader = null;
+            HardwareRenderer renderer = null;
+            try {
+                reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
+                renderer = new HardwareRenderer();
+                renderer.setSurface(reader.getSurface());
+                RenderNode node = new RenderNode("snapgent-frame");
+                node.setPosition(0, 0, width, height);
+                RecordingCanvas canvas = node.beginRecording();
+                canvas.drawColor(Color.BLACK);
+                webView.draw(canvas);
+                node.endRecording();
+                renderer.setContentRoot(node);
+                renderer.createRenderRequest().syncAndDraw();
+
+                Image image = nextImage(reader, 1_000);
+                if (image == null) return null;
+                Bitmap bitmap;
+                try {
+                    bitmap = imageToBitmap(image);
+                } finally {
+                    image.close();
+                }
+                if (bitmap != null && isUniform(bitmap)) {
+                    bitmap.recycle();
+                    return null;
+                }
+                return bitmap;
+            } catch (Throwable t) {
+                BridgeLog.warn("RenderTools", "RenderNode capture unavailable: " + describe(t));
+                return null;
+            } finally {
+                if (renderer != null) {
+                    try {
+                        renderer.destroy();
+                    } catch (Throwable ignored) {
+                    }
+                }
+                if (reader != null) {
+                    try {
+                        reader.close();
+                    } catch (Throwable ignored) {
+                    }
+                }
+            }
+        }
+
+        /** GPU path 2: give the WebView its own virtual display and read the composed frames. */
+        private Bitmap grabVirtualDisplay() {
+            try {
+                ensureVirtualDisplay();
+                if (displayReader == null) return null;
+                Image image = nextImage(displayReader, 1_500);
+                if (image == null) return null;
+                Bitmap bitmap;
+                try {
+                    bitmap = imageToBitmap(image);
+                } finally {
+                    image.close();
+                }
+                if (bitmap != null && isUniform(bitmap)) {
+                    bitmap.recycle();
+                    return null;
+                }
+                return bitmap;
+            } catch (Throwable t) {
+                BridgeLog.warn("RenderTools", "Virtual display capture unavailable: " + describe(t));
+                return null;
+            }
+        }
+
+        private void ensureVirtualDisplay() throws Exception {
+            if (displayReader != null) return;
+            DisplayManager displays = (DisplayManager) context.getSystemService(Context.DISPLAY_SERVICE);
+            if (displays == null) throw new IOException("no display manager");
+            ImageReader reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3);
+            VirtualDisplay display = displays.createVirtualDisplay("snapgent-render", width, height,
+                    DisplayMetrics.DENSITY_MEDIUM, reader.getSurface(),
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION
+                            | DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY);
+            if (display == null) {
+                reader.close();
+                throw new IOException("cannot create a virtual display");
+            }
+            Context displayContext = context.createDisplayContext(display.getDisplay());
+            Presentation window = new Presentation(displayContext, display.getDisplay());
+            FrameLayout root = new FrameLayout(displayContext);
+            root.setBackgroundColor(Color.BLACK);
+            window.setContentView(root);
+            window.show();
+            if (windowAttached && windowManager != null && webView != null) {
+                try {
+                    windowManager.removeView(webView);
+                } catch (Throwable ignored) {
+                }
+                windowAttached = false;
+            }
+            root.addView(webView, new FrameLayout.LayoutParams(width, height));
+            displayReader = reader;
+            virtualDisplay = display;
+            presentation = window;
+            Thread.sleep(150); // let the private display compose its first frame
+        }
+
+        private Bitmap grabSoftware() throws IOException {
+            if (webView == null) throw new IOException("WebView is gone");
+            // The software layer is the only way View.draw() can read pixels out of the
+            // WebView tree, and it is exactly what turns WebGL off.
+            webView.setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+            Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(bitmap);
+            canvas.drawColor(Color.BLACK);
+            webView.draw(canvas);
             return bitmap;
+        }
+
+        private static Image nextImage(ImageReader reader, long timeoutMs) {
+            long deadline = System.currentTimeMillis() + timeoutMs;
+            while (true) {
+                Image image = reader.acquireLatestImage();
+                if (image != null) return image;
+                if (System.currentTimeMillis() >= deadline) return null;
+                try {
+                    Thread.sleep(15);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return null;
+                }
+            }
+        }
+
+        private static Bitmap imageToBitmap(Image image) {
+            if (image.getPlanes().length == 0) return null;
+            Image.Plane plane = image.getPlanes()[0];
+            if (plane.getPixelStride() != 4) return null;
+            int w = image.getWidth();
+            int h = image.getHeight();
+            int rowStride = plane.getRowStride();
+            ByteBuffer buffer = plane.getBuffer();
+            Bitmap bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+            if (rowStride == w * 4) {
+                buffer.rewind();
+                bitmap.copyPixelsFromBuffer(buffer);
+                return bitmap;
+            }
+            byte[] row = new byte[rowStride];
+            int[] pixels = new int[w * h];
+            for (int y = 0; y < h; y++) {
+                buffer.position(y * rowStride);
+                int length = Math.min(rowStride, buffer.remaining());
+                if (length <= 0) break;
+                buffer.get(row, 0, length);
+                for (int x = 0; x < w; x++) {
+                    int i = x * 4;
+                    if (i + 3 >= length) break;
+                    pixels[y * w + x] = ((row[i + 3] & 0xFF) << 24)
+                            | ((row[i] & 0xFF) << 16)
+                            | ((row[i + 1] & 0xFF) << 8)
+                            | (row[i + 2] & 0xFF);
+                }
+            }
+            bitmap.setPixels(pixels, 0, w, 0, 0, w, h);
+            return bitmap;
+        }
+
+        /** A frame whose pixels are all identical means the read-back produced nothing. */
+        private static boolean isUniform(Bitmap bitmap) {
+            int first = bitmap.getPixel(0, 0);
+            int stepX = Math.max(1, bitmap.getWidth() / 24);
+            int stepY = Math.max(1, bitmap.getHeight() / 24);
+            for (int y = 0; y < bitmap.getHeight(); y += stepY) {
+                for (int x = 0; x < bitmap.getWidth(); x += stepX) {
+                    if (bitmap.getPixel(x, y) != first) return false;
+                }
+            }
+            return true;
+        }
+
+        /** Asks the page which renderer backs its WebGL context: a GPU name, or SwiftShader. */
+        private void probeWebGl() {
+            final CountDownLatch done = new CountDownLatch(1);
+            MAIN.post(() -> {
+                try {
+                    String js = "(function(){try{var c=document.createElement('canvas');"
+                            + "var g=c.getContext('webgl2')||c.getContext('webgl')||c.getContext('experimental-webgl');"
+                            + "if(!g)return 'none';var e=g.getExtension('WEBGL_debug_renderer_info');"
+                            + "return e?String(g.getParameter(e.UNMASKED_RENDERER_WEBGL)):String(g.getParameter(g.RENDERER));"
+                            + "}catch(err){return 'error:'+err.message;}})()";
+                    webView.evaluateJavascript(js, value -> {
+                        webgl = unquote(value);
+                        done.countDown();
+                    });
+                } catch (Throwable t) {
+                    webgl = "unavailable: " + describe(t);
+                    done.countDown();
+                }
+            });
+            try {
+                done.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        private static String unquote(String value) {
+            if (value == null) return "unknown";
+            String text = value.trim();
+            if (text.length() >= 2 && text.startsWith("\"") && text.endsWith("\"")) {
+                text = text.substring(1, text.length() - 1);
+            }
+            return text.replace("\\u003C", "<")
+                    .replace("\\u003E", ">")
+                    .replace("\\\"", "\"")
+                    .replace("\\\\", "\\");
         }
 
         void close() {
             MAIN.post(() -> {
+                if (presentation != null) {
+                    try {
+                        presentation.dismiss();
+                    } catch (Throwable ignored) {
+                    }
+                    presentation = null;
+                }
+                if (virtualDisplay != null) {
+                    try {
+                        virtualDisplay.release();
+                    } catch (Throwable ignored) {
+                    }
+                    virtualDisplay = null;
+                }
+                if (displayReader != null) {
+                    try {
+                        displayReader.close();
+                    } catch (Throwable ignored) {
+                    }
+                    displayReader = null;
+                }
+                if (windowAttached && windowManager != null && webView != null) {
+                    try {
+                        windowManager.removeView(webView);
+                    } catch (Throwable ignored) {
+                    }
+                    windowAttached = false;
+                }
                 if (webView != null) {
                     try {
                         webView.stopLoading();
@@ -947,6 +1357,24 @@ final class RenderTools {
 
     private static JSONObject property(String type, String description) throws JSONException {
         return new JSONObject().put("type", type).put("description", description);
+    }
+
+    /** Reads {@code render_mode}; gpu is the default so WebGL keeps working. */
+    private static String renderMode(JSONObject args) throws IOException {
+        String mode = args.optString("render_mode", MODE_GPU).trim().toLowerCase(Locale.ROOT);
+        if (mode.isEmpty()) return MODE_GPU;
+        if (!MODE_GPU.equals(mode) && !MODE_SOFTWARE.equals(mode)) {
+            throw new IOException("render_mode must be '" + MODE_GPU + "' or '" + MODE_SOFTWARE
+                    + "', not '" + mode + "'");
+        }
+        return mode;
+    }
+
+    private static String describe(Throwable t) {
+        String message = t.getMessage();
+        return message == null || message.isEmpty()
+                ? t.getClass().getSimpleName()
+                : t.getClass().getSimpleName() + ": " + message;
     }
 
     private static int dim(int value) throws IOException {
