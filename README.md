@@ -2,12 +2,12 @@
 
 Android-native (Java 17) on-device bridge. It runs a loopback-only WebSocket server inside the phone and speaks both the MCP JSON-RPC protocol and the SnapgentV3 extension's native WebSocket protocol, so the Snapgent extension running in an Android browser can read files, edit a workspace, and drive Git on the device — without the desktop Python bridge.
 
-Current build: **0.1.6** (`dev.snapgent.bridge`, minSdk 26, targetSdk 34, versionCode 8).
+Current build: **0.1.7** (`dev.snapgent.bridge`, minSdk 26, targetSdk 34, versionCode 9).
 
 ## Download the release APK
 
-- Latest release: [Releases v0.1.6](https://github.com/insiderinside/snapgent-bridge-apk/releases/tag/v0.1.6) — asset `snapgent-bridge-0.1.6.apk`.
-- Install over ADB: `adb install -r snapgent-bridge-0.1.6.apk`, or open the asset link on the phone.
+- Latest release: [Releases v0.1.7](https://github.com/insiderinside/snapgent-bridge-apk/releases/tag/v0.1.7) — asset `snapgent-bridge-0.1.7.apk`.
+- Install over ADB: `adb install -r snapgent-bridge-0.1.7.apk`, or open the asset link on the phone.
 - Upgrading from the debug-signed `v0.1.0` needs `adb uninstall dev.snapgent.bridge` first; every release since `v0.1.1` upgrades in place because they all use the release key.
 
 `v0.1.1` onwards are signed with a dedicated **4096-bit RSA release keystore** (APK Signature Scheme v2):
@@ -80,6 +80,20 @@ The MCP port is configurable in the app (1024–65535, excluding the native port
 - `run_command` runs a fixed allowlist of utilities (`pwd`, `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `stat`, `sha256sum`, `date`, `uname`, `df`) with per-utility argument checks, at most 32 arguments, and no shell.
 - `run_python` executes code with the app's own UID inside the same app-private boundary: `cwd` cannot escape it, output is capped at 256 KiB, the soft timeout is 15 s, and dependencies are resolved at build time (no runtime `pip`). Only packages that ship an arm64 wheel can be added; an unavailable one fails the build instead of the tool call.
 
+## Lifecycle: what keeps the bridge reachable
+
+Two different mechanisms keep remote control working while the app is not on screen:
+
+| Part | Mechanism | Dies when |
+|---|---|---|
+| The WebSocket server (`8765` / `17613`) | `BridgeService` is a **foreground service** (`foregroundServiceType="dataSync"`, notification `Snapgent local bridge`) and returns `START_STICKY`, so the system recreates it with a null intent after an eviction | the user taps Stop, or the OEM battery manager kills the process and never restarts it |
+| Device control (the 12 `device_*` / `screen_*` tools) | `DeviceAutomationService` is an **accessibility service**, bound by the system, same process, no notification | the service is switched off or accessibility is revoked |
+| `app_launch` bringing another app forward | `LaunchOverlay`, a visible 1×1 overlay that exempts the start from the background-activity-launch rule | the *Display over other apps* permission is revoked (Android resets it on every reinstall) |
+
+With **Start when app opens** enabled, the accessibility service also calls `BridgeService.startIfEnabled()` when it rebinds, so a process the system killed comes back with its socket instead of staying a device-control shell the extension cannot reach. Android 12+ may still refuse to start a foreground service from the background; the bridge then records `Auto-start refused: …` and the app's Start button is the way back.
+
+Practical limits: taps land on whatever is in front (with a browser in front you are driving the browser, so call `app_launch` first); the accessibility dump exposes native UI reliably but Chromium page content only as the URL bar plus a loading label; the screen must be on and unlocked. On MIUI, also allow autostart and remove the bridge from battery restrictions, otherwise the process may not come back at all.
+
 ## Compatibility
 
 The extension wire protocol was taken from the SnapgentV3 extension: the native endpoint greets a client with a `connected` frame (reporting `bridge_version: android-<installed version>` plus the full tool catalog), answers `ping`/`pong`, serves `list_tools`, executes `call_tool`, and accepts `restart_mcp`. `stream` and `progress` frames are accepted as fire-and-forget telemetry.
@@ -120,5 +134,5 @@ Every script drives the running bridge over ADB and fails with a non-zero exit c
 
 ## Roadmap
 
-- Optional user-controlled auto-start on boot (preference exists, not wired to a boot receiver yet).
+- Auto-start after a reboot before Android rebinds the accessibility service (a `BOOT_COMPLETED` receiver); today the preference covers service eviction plus accessibility rebind, not a cold boot with accessibility off.
 - Versioned changelog per APK; CI workflow that builds and signs on tag (keystore injected as repository secrets).

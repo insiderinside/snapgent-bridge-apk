@@ -74,6 +74,9 @@ public final class DeviceAutomationService extends AccessibilityService {
         super.onServiceConnected();
         instance = this;
         BridgeLog.info(TAG, "Accessibility service connected; device control tools are live");
+        // If this process was reborn after an eviction, the socket is still
+        // down; Auto-start brings it back so the extension can reconnect.
+        BridgeService.startIfEnabled(this);
     }
 
     @Override

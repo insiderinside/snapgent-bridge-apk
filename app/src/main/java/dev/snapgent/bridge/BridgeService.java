@@ -5,6 +5,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
 import android.os.IBinder;
@@ -31,7 +32,7 @@ public class BridgeService extends Service {
             closeServers();
             running = false;
         }
-        if (running) return START_NOT_STICKY;
+        if (running) return START_STICKY;
         try {
             startForeground(11, buildNotification());
             String token = BridgeConfig.token(this);
@@ -48,8 +49,36 @@ public class BridgeService extends Service {
             closeServers();
             Log.e("SnapgentBridge", "Startup failed", e);
             stopSelf();
+            return START_NOT_STICKY;
         }
-        return START_NOT_STICKY;
+        // START_STICKY: if the system evicts the process, Android recreates the
+        // service (with a null intent) and the socket comes back by itself.
+        return START_STICKY;
+    }
+
+    /**
+     * Restarts the bridge after the process was killed, but only when the user
+     * turned on Auto-start. The accessibility service calls this on rebind, so
+     * a reborn process brings its WebSocket door back instead of staying a
+     * device-control shell the extension cannot reach.
+     */
+    public static void startIfEnabled(Context context) {
+        if (running) return;
+        if (!BridgeConfig.autoStart(context)) {
+            BridgeLog.info("BridgeService", "Bridge is down and Auto-start is off; waiting for a manual start");
+            return;
+        }
+        Intent intent = new Intent(context, BridgeService.class).setAction(ACTION_START);
+        try {
+            if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent);
+            else context.startService(intent);
+            BridgeLog.info("BridgeService", "Auto-start: asked the system to bring the bridge back");
+        } catch (Exception e) {
+            // Android 12+ can refuse a foreground service started from the
+            // background; the user then still has to open the app and tap Start.
+            lastError = "Auto-start refused: " + e.getMessage();
+            BridgeLog.warn("BridgeService", lastError);
+        }
     }
 
     private void closeServers() {
