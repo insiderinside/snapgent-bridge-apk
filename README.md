@@ -6,8 +6,8 @@ Current build: **0.1.6** (`dev.snapgent.bridge`, minSdk 26, targetSdk 34, versio
 
 ## Download the release APK
 
-- Latest release: [Releases v0.1.6](https://github.com/insiderinside/snapgent-bridge-apk/releases/tag/v0.1.6) — asset `app-release.apk`.
-- Install over ADB: `adb install -r app-release.apk`, or open the asset link on the phone.
+- Latest release: [Releases v0.1.6](https://github.com/insiderinside/snapgent-bridge-apk/releases/tag/v0.1.6) — asset `snapgent-bridge-0.1.6.apk`.
+- Install over ADB: `adb install -r snapgent-bridge-0.1.6.apk`, or open the asset link on the phone.
 - Upgrading from the debug-signed `v0.1.0` needs `adb uninstall dev.snapgent.bridge` first; every release since `v0.1.1` upgrades in place because they all use the release key.
 
 `v0.1.1` onwards are signed with a dedicated **4096-bit RSA release keystore** (APK Signature Scheme v2):
